@@ -55,8 +55,55 @@ The approved plan lives at
 | Pass 3 — the plugin contract | **Done** → `docs/platform/02-plugin-contract.md` |
 | Scaffold boot check | **Done — PASSES on v2.2.15** → `docs/spikes/00-boot-check.md` |
 | Pass 4 — recency and trajectory | **Done** → `docs/platform/03-changelog.md` |
-| Phase 1 — calibration spikes A–E | **Done** → `docs/spikes/01-calibration.md` (one gap: no provider key) |
-| Phase 2 — decisions (§6) | Blocked on the above |
+| Phase 1 — calibration spikes A–E | **Done** → `docs/spikes/01-calibration.md` |
+| Phase 2 — decisions (§6) | **Done** — see below |
+| Phase 3 — standards + CI (§7) | **Done** — `pnpm run verify`, `.github/workflows/ci.yml`, CI green |
+| Phase 4 — build (§8) | **Started** — the plugin scaffolds, builds, and boots |
+
+## The §6 decisions, as made
+
+1. **What phosphene is** — an ObjectiveAI plugin.
+2. **Repo** — `mayagore/phosphene`, local `~/Programming/phosphene`. Old repo is
+   `mayagore/phosphene-legacy`, kept as reference, never modified.
+3. **Halves** — viewer only. `scaffold.sh` emits both halves, so this was a
+   hand-copy of the viewer scaffold; its own README documents that as supported.
+4. **Legacy reuse** — prompts, the scoring rubric, and the design tokens. Not the
+   code. → `docs/legacy/00-the-old-app.md`.
+5. **Toolchain** — the scaffold's esbuild. Vite strips entry exports, which is
+   the bug we fixed upstream in v2.2.15; a Vite-built plugin hits it silently.
+
+## In flight, 2026-08-01
+
+**A workflow is deriving the function-execution wire shape** three independent
+ways (generated JSON schemas / SDK types / the live CLI's own schemas), then
+adversarially reconciling them. When it lands: run the cheapest possible real
+function execution with a DIVERSE swarm.
+
+Standing authorization from Maya: run it as soon as the derivation is ready.
+
+The execution path is confirmed reachable and needs no publishing step —
+`functions execute standard` takes `--function-inline`, `--profile-inline`, and
+`--input-inline`. Both `standard` and `swiss-system` exist as siblings; Swiss
+System is the pooling mode built for scoring N candidates against each other,
+which is phosphene's shape.
+
+**Three things to check in the output:**
+1. Does it stream at all — the first real function execution by anyone here.
+2. Where `split_index` / `task_index` actually appear. The SDK's own
+   `…TaskChunkMerged` type DROPS both (`docs/platform/02-plugin-contract.md`
+   §11) — the exact field whose loss made the legacy board read 0.52.
+3. **Whether a diverse swarm produces a non-degenerate vote distribution.**
+   Nobody has ever tested this. The old app's swarm was N byte-identical agents,
+   so its agreement metric measured one model's sampling variance. This is the
+   first real test of the platform's central claim.
+
+## Two standing unknowns
+
+- **Collective judgment is unvalidated.** Neither the old app nor this session
+  has ever run a swarm of genuinely different models. It is phosphene's whole
+  reason to be on this platform.
+- **No function execution has ever run.** Agent completions are verified end to
+  end; the layer the *review* runs on is not.
 
 **Sequencing change, 2026-07-31.** The boot check moves between Pass 3 and Pass 4.
 Not before Pass 3, because Pass 3 *is* the scaffold and running it unread is
