@@ -1,0 +1,26 @@
+{
+  "name": "phosphene",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Design iteration and judgment, as an ObjectiveAI viewer plugin. Identity lives in the git tag on release and in the `development plugins viewer create` registration in development \u2014 never in this file.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "check:contracts": "node scripts/check-contracts.mjs",
+    "verify": "pnpm run typecheck && pnpm run build && pnpm run check:contracts"
+  },
+  "dependencies": {
+    "@objectiveai/sdk": "2.2.15",
+    "@tauri-apps/api": "^2.10.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "esbuild": "^0.25.10",
+    "typescript": "^5.8.3"
+  }
+}

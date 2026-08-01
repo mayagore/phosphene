@@ -1,0 +1,119 @@
+/* Phosphene's own stylesheet.
+ *
+ * Declared in objectiveai.json as `viewer.tabs[0].styles`, which is the ONLY
+ * path that works: a bundler strips `import "./x.css"` from a JS entry and
+ * emits the file beside it, so nothing would ever request it. The host injects
+ * this as a <link> and AWAITS it before rendering the component — a sheet that
+ * fails to load stops the tab rather than showing it unstyled.
+ *
+ * Scope is this tab's own document (every tab is its own webview), so nothing
+ * here can reach another tab or the viewer's chrome.
+ *
+ * ── What we inherit, and the one rule ────────────────────────────────────
+ * The tab document already carries the viewer's app.css: Tailwind preflight, a
+ * `color-scheme: dark` html, a flex-column 13px body, a universal margin/padding
+ * reset, and the viewer's own @theme tokens.
+ *
+ * We CONSUME the viewer's tokens where they mean the same thing to us, because
+ * they are declared and stable. We do NOT use its Tailwind utility classes —
+ * `flex`, `p-4` and friends happen to work only because the viewer itself uses
+ * them, and an upstream refactor would delete them with no error on our side.
+ * Everything below is plain CSS against our own class names.
+ * (Measured in docs/spikes/01-calibration.md §C.)
+ */
+
+@import "./tokens.css";
+
+.phosphene {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-6);
+  padding: var(--spacing-7);
+  max-width: 720px;
+  font-family: var(--font-sans);
+  color: var(--color-text-primary);
+}
+
+.phosphene-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.phosphene-title {
+  font-size: var(--text-title);
+  line-height: var(--text-title--line-height);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.phosphene-subtitle {
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  color: var(--color-text-secondary);
+  max-width: 52ch;
+}
+
+.phosphene-status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-3) var(--spacing-4);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-card);
+  font-size: var(--text-label);
+  line-height: var(--text-label--line-height);
+  letter-spacing: var(--text-label--letter-spacing);
+  color: var(--color-text-secondary);
+  width: fit-content;
+}
+
+/* The status dot is the one place colour carries meaning here. Accent means
+ * "working"; the failure colour is deliberately NOT raw red — the legacy app's
+ * one un-tokenized colour was `red-500` reached for directly, and it is the
+ * single place its palette broke. */
+.phosphene-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  flex: none;
+}
+
+.phosphene-dot--connecting {
+  background: var(--color-text-muted);
+  animation: phosphene-pulse 1.4s ease-in-out infinite;
+}
+
+.phosphene-dot--ready {
+  background: var(--color-accent-default);
+}
+
+.phosphene-dot--unavailable {
+  background: var(--color-score-low);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.phosphene-note {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  color: var(--color-text-muted);
+}
+
+@keyframes phosphene-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* The viewer's app.css kills animation under prefers-reduced-motion with
+ * !important, so this is belt-and-braces for a standalone render. */
+@media (prefers-reduced-motion: reduce) {
+  .phosphene-dot--connecting {
+    animation: none;
+  }
+}

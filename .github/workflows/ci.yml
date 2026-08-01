@@ -1,0 +1,90 @@
+name: CI
+
+# Two jobs, because they prove different things.
+#
+# `verify` is fast and runs the contracts: typecheck, build, then the three
+# silent-failure assertions (react external, declared paths exist, entry
+# exports survive).
+#
+# `release-build` is the only thing that proves the RELEASE path works.
+# `pnpm run build` passing locally does not — the laboratory host builds the
+# Containerfile, copies `viewer.output` out of the image, and never runs it.
+# This reproduces that exactly, per the recipe in the Containerfile header.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run build
+      - name: Contract assertions
+        run: pnpm run check:contracts
+
+  release-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Exactly what objectiveai-laboratory/src/viewer_build.rs does: build the
+      # manifest's containerfile with ITS OWN DIRECTORY as the context, copy
+      # `viewer.output`'s contents out of the built image, then discard both
+      # container and image. The image is never started.
+      - name: Build the viewer image the way the laboratory does
+        run: |
+          set -euo pipefail
+          podman build -t phosphene-viewer .
+          podman create --name pv phosphene-viewer
+          mkdir -p out
+          podman cp pv:/dist/. out/
+          podman rm pv
+          podman rmi phosphene-viewer
+
+      # The host's own validate_output: every declared module, style, script
+      # and icon must exist in the copied output — "caught HERE, where the
+      # author sees it, not as an unstyled tab."
+      - name: Assert the packed output satisfies the manifest
+        run: |
+          set -euo pipefail
+          ls -la out/
+          node -e '
+            const {readFileSync, existsSync} = require("node:fs");
+            const {join} = require("node:path");
+            const v = JSON.parse(readFileSync("objectiveai.json","utf8")).viewer;
+            const paths = [];
+            for (const t of v.tabs ?? []) {
+              paths.push(t.module, ...(t.styles ?? []));
+            }
+            for (const s of v.scripts ?? []) paths.push(s.module);
+            if (v.icon) paths.push(v.icon);
+            let bad = 0;
+            for (const p of paths) {
+              const f = join("out", p.replace(/^\.?\//, ""));
+              const ok = existsSync(f);
+              console.log(`${ok ? "  ok  " : "  MISS"} ${p}`);
+              if (!ok) bad++;
+            }
+            if (bad) { console.error(`${bad} declared path(s) missing from the packed output`); process.exit(1); }
+          '
+
+      # The release artifact is what actually ships, so assert the contracts
+      # against IT, not against a local build.
+      - name: Contract assertions against the release artifact
+        run: |
+          set -euo pipefail
+          rm -rf dist && mv out dist
+          node scripts/check-contracts.mjs

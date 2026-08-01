@@ -1,0 +1,95 @@
+/* Phosphene design tokens — generated from the Figma "Phosphene" variable collection.
+ * Source: figma.com/design/4NqOH4jScHXMGw8JZ0LbKP  ·  modes: Blue (dark, default) + Light
+ *
+ * Tailwind v4: import this into the viewer's main CSS. The @theme namespaces below
+ * generate utilities like `bg-surface-canvas`, `text-text-primary`, `rounded-md`,
+ * `text-title`, etc. Dark is the default (:root); add `data-theme="light"` on <html>
+ * to flip. Artboards stay neutral and accent stays blue across both modes.
+ */
+
+@theme {
+  /* accent — interaction / selection / judgment */
+  --color-accent-default: #4d9fff;
+  --color-accent-hover:   #6fb2ff;
+  --color-accent-press:   #2f7fe0;
+  --color-accent-soft:    #163763;
+  --color-accent-on:      #051022;
+
+  /* surface — chrome */
+  --color-surface-canvas: #0a1326;
+  --color-surface-panel:  #0c1730;
+  --color-surface-card:   #13234a;
+  --color-surface-raised: #172a50;
+  --color-surface-sunken: #0a152e;
+
+  /* border */
+  --color-border-subtle: #22335a;
+  --color-border-strong: #35497c;
+
+  /* text */
+  --color-text-primary:   #eaf1fb;
+  --color-text-secondary: #a6b6d6;
+  --color-text-muted:     #6a7ba0;
+
+  /* artboard — generated designs, NEUTRAL (identical in both modes; never tint) */
+  --color-artboard-bg:      #ffffff;
+  --color-artboard-surface: #f0f1f3;
+  --color-artboard-line:    #dbdde0;
+  --color-artboard-ink:     #1b1d22;
+  --color-artboard-muted:   #8c9099;
+
+  /* score — tonal scale (low -> mid -> high encodes magnitude) */
+  --color-score-track: #1c2c4f;
+  --color-score-low:   #5a739e;
+  --color-score-mid:   #4d9fff;
+  --color-score-high:  #86ceff;
+
+  /* chrome gradient stops (deep-blue background) */
+  --color-chrome-grad-top:    #0b1c44;
+  --color-chrome-grad-mid:    #111b3f;
+  --color-chrome-grad-bottom: #05070f;
+
+  /* spacing scale */
+  --spacing-1: 4px;  --spacing-2: 8px;  --spacing-3: 12px; --spacing-4: 16px;
+  --spacing-5: 20px; --spacing-6: 24px; --spacing-7: 32px; --spacing-8: 40px;
+
+  /* radius scale */
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 14px; --radius-xl: 20px; --radius-pill: 999px;
+
+  /* type ramp — Inter */
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --text-title: 19px;     --text-title--line-height: 26px;
+  --text-heading: 14px;   --text-heading--line-height: 20px;
+  --text-body: 13px;      --text-body--line-height: 20px;
+  --text-label: 11px;     --text-label--line-height: 16px; --text-label--letter-spacing: 0.4px;
+  --text-caption: 11px;   --text-caption--line-height: 15px;
+  --text-score: 18px;     --text-score--line-height: 20px;
+  --text-score-big: 30px; --text-score-big--line-height: 34px;
+}
+
+/* Light mode — only the values that change. Toggle: <html data-theme="light">
+ * (accent-default, accent-on, artboard/*, score low|mid|high, spacing, radius, type are unchanged) */
+[data-theme="light"] {
+  --color-accent-hover: #2f7fe0;
+  --color-accent-press: #1e63b8;
+  --color-accent-soft:  #e3eeff;
+
+  --color-surface-canvas: #f4f6fb;
+  --color-surface-panel:  #ffffff;
+  --color-surface-card:   #eef3fa;
+  --color-surface-raised: #fbfdff;
+  --color-surface-sunken: #eef2f8;
+
+  --color-border-subtle: #e4e9f2;
+  --color-border-strong: #ccd5e4;
+
+  --color-text-primary:   #14213d;
+  --color-text-secondary: #51618a;
+  --color-text-muted:     #6e7a95;
+
+  --color-score-track: #d3dae6;
+
+  --color-chrome-grad-top:    #ffffff;
+  --color-chrome-grad-mid:    #f4f6fb;
+  --color-chrome-grad-bottom: #e7ecf5;
+}
