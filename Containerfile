@@ -19,8 +19,11 @@ FROM docker.io/library/node:22-alpine
 RUN corepack enable
 
 WORKDIR /build
-COPY package.json ./
-RUN pnpm install --ignore-workspace --no-frozen-lockfile
+# Copy the LOCKFILE too, and install frozen. Without it every dependency
+# re-resolves at image-build time, so `verify` proves one dependency set and
+# the released artifact ships another.
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --ignore-workspace --frozen-lockfile
 COPY . ./
 
 RUN node build.mjs && cp -r /build/dist /dist

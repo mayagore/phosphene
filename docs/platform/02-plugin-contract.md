@@ -457,3 +457,54 @@ release path.
 `objectiveai-mcp-plugin-framework-rs/src/` (the `Tools`, `db`, and
 `command_executor` surfaces), and what a plugin's own `CommandExecutor` can reach
 from inside a container versus what the viewer can.
+
+---
+
+## 11. Addendum, 2026-08-01 — the chunk surface, which Passes 2–4 all missed
+
+An adversarial audit of the plan found something four reading passes did not:
+**the SDK ships merge helpers for exactly the streaming chunk types phosphene's
+review consumes, and the obvious one is poisoned.**
+
+Five exist in `@objectiveai/sdk` 2.2.15:
+
+```
+functionsExecutionsResponseStreamingFunctionExecutionChunkMerged
+functionsExecutionsResponseStreamingTaskChunkMerged
+functionsExecutionsResponseStreamingTaskChunkMergedList
+functionsExecutionsResponseStreamingVectorCompletionTaskChunkMerged
+functionsExecutionsResponseStreamingReasoningSummaryChunkMerged
+```
+
+**None is named anywhere in Passes 2, 3, or 4.** The reason is a real gap in
+method: those passes enumerated the *request* surface — the `cli/command/` tree,
+what a plugin may call — and never the *chunk* surface, what streams back. The
+request side is what the old app got wrong loudly; the chunk side is what it got
+wrong silently.
+
+**The poison.** Comparing the raw and merged task-chunk types:
+
+| type | `split_index` | `task_index` |
+|---|---|---|
+| `…FunctionExecutionTaskChunk` | present | present |
+| `…FunctionExecutionTaskChunkMerged` | **absent** | **absent** |
+
+`split_index` is precisely the field whose loss made the legacy app's entire
+board read **0.52 while the written critique beside it was accurate** — the most
+insidious bug in that repo (`legacy/00-the-old-app.md` §3). A rebuild that reaches
+for the obvious SDK merge helper reproduces it exactly.
+
+**Consequences for phosphene:**
+
+1. **Never hand-merge a chunk, and never assume the SDK's merge is lossless.**
+   Both were mistakes the old app made in different directions.
+2. Before the review is built, pick the merge path deliberately and **write down
+   why**, then land a regression test asserting `split_index` survives N merges.
+   The old app's own best test does exactly this
+   (`useDesignReview.test.ts:238-268`) and it is worth copying.
+3. **Report the omission upstream.** We are pinned to 2.2.15 and this is a
+   footgun in a public helper.
+
+**Method correction for future passes:** enumerate both directions of every
+surface — what we send *and* what comes back. Four passes, all thorough on
+requests, all silent on chunks.

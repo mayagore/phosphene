@@ -103,6 +103,71 @@ for (const path of tabModules) {
   );
 }
 
+// ── 4. The manifest declares what we INTEND ──────────────────────────────
+// The checks above are one-directional: they assert everything declared
+// exists. Nothing asserted the manifest declares anything at all. Renaming
+// `tabs` to `tab` produced a viewer half with zero boot tabs and a clean
+// "all contracts hold, exit 0".
+const tabs = viewer?.tabs ?? [];
+const bootTabs = tabs.filter((t) => typeof t.title === "string");
+if (bootTabs.length < 1) {
+  failures.push(
+    "manifest declares no boot tab (a `viewer.tabs[]` entry with a `title`) — " +
+      "the plugin would install and surface nothing",
+  );
+}
+for (const t of tabs) {
+  // ViewerTab is an UNTAGGED enum: an entry carrying BOTH reads as a channel
+  // handler and its title is silently ignored, so it never opens at boot.
+  if (t.title !== undefined && t.channel_key !== undefined) {
+    failures.push(
+      `tab declares both \`title\` and \`channel_key\` (${t.module}) — reads as a ` +
+        `channel handler, never boots`,
+    );
+  }
+  if (t.title === undefined && t.channel_key === undefined) {
+    failures.push(`tab declares neither \`title\` nor \`channel_key\`: ${t.module}`);
+  }
+}
+notes.push(`${bootTabs.length} boot tab(s), ${tabs.length - bootTabs.length} channel handler(s)`);
+
+// ── 5. The built CSS actually APPLIES ────────────────────────────────────
+// Shipped once with the whole token file inside a Tailwind-only `@theme{}`
+// block in a build with no Tailwind: the engine discards the at-rule and
+// every declaration in it, so all 73 tokens were inert and all 25 var()
+// references resolved to nothing. Every other check passed.
+const KNOWN_AT_RULES = new Set([
+  "media", "supports", "keyframes", "font-face", "import", "charset",
+  "layer", "container", "page", "property", "scope", "starting-style",
+  "counter-style", "namespace", "font-feature-values",
+]);
+for (const [, path] of declared.filter(([k]) => k === "tab style")) {
+  const file = resolve(path);
+  if (!existsSync(file)) continue;
+  const css = readFileSync(file, "utf8");
+
+  for (const m of css.matchAll(/@([a-zA-Z-]+)/g)) {
+    if (!KNOWN_AT_RULES.has(m[1])) {
+      failures.push(
+        `${path}: unknown at-rule @${m[1]} — browsers discard the rule AND ` +
+          `every declaration inside it (this is how @theme shipped inert)`,
+      );
+    }
+  }
+
+  const used = new Set([...css.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]));
+  const defined = new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+  const undef = [...used].filter((v) => !defined.has(v));
+  if (undef.length) {
+    failures.push(
+      `${path}: ${undef.length} var() reference(s) not defined in this sheet — ` +
+        `they resolve to nothing, or worse, to the HOST's same-named token: ` +
+        undef.slice(0, 6).join(", "),
+    );
+  }
+  notes.push(`${path}: ${used.size} var() refs, all defined; no unknown at-rules`);
+}
+
 for (const n of notes) console.log(`  ok  ${n}`);
 if (failures.length) {
   console.error("\ncontract check FAILED:");
