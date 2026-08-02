@@ -68,9 +68,11 @@ broadly right, but §6.3 is now superseded — see below.
 1. **What phosphene is** — an ObjectiveAI plugin.
 2. **Repo** — `mayagore/phosphene`, local `~/Programming/phosphene`. Old repo is
    `mayagore/phosphene-legacy`, kept as reference, never modified.
-3. **Halves** — ~~viewer only~~ **SUPERSEDED 2026-08-01 — see the ARCHITECTURE
-   CHANGED section below. Phosphene needs the MCP half.** The viewer scaffold
-   was hand-copied (`scaffold.sh` emits both halves); that part still stands.
+3. **Halves** — **viewer only. STANDS.** (Briefly retracted on 2026-08-01 in
+   favour of adding the MCP half; that retraction was itself wrong and is
+   withdrawn — a script agent covers scoring with no container. See the
+   ARCHITECTURE CHANGED section.) The viewer scaffold was hand-copied;
+   `scaffold.sh` only emits both halves.
 4. **Legacy reuse** — prompts, the scoring rubric, and the design tokens. Not the
    code. → `docs/legacy/00-the-old-app.md`.
 5. **Toolchain** — the scaffold's esbuild. Vite strips entry exports, which is
@@ -117,15 +119,63 @@ scoring has to move somewhere a key is legitimate: a plugin container.
 
 ### What this changes
 
-- **§6.3 FLIPS — phosphene needs the MCP half.** We decided viewer-only; that
-  decision is now wrong. Viewer-only can display an agent's work but cannot
-  score without violating the daemon rule.
 - **§6.1 narrows**: the viewer half is a display surface, not the app.
-- **The review is not built on functions.** Scoring goes plugin-side, invoked by
-  an agent as a tool.
-- **Script agents** (`.agents/skills/script-agents/SKILL.md`) run Python on the
-  client's embedded runtime with no model and no token cost, and can call plugin
-  tools — a strong candidate for deterministic orchestration.
+- **The review is not built on functions.** Scoring is reconstructed as N agent
+  completions, orchestrated by a script agent — see the verified answer below.
+- **§6.3 STANDS. Viewer-only is still correct.** An intermediate conclusion that
+  the MCP half was now required was **wrong and has been retracted** — see below.
+
+### VERIFIED 2026-08-01 — how scoring works without functions
+
+Investigated across the framework, the laboratory's container setup, and the
+alternatives. Verdict: **a plugin can never do a vector completion — nothing can
+via the CLI — but multi-agent scoring is reachable as N agent completions.**
+
+Evidence, each checked against source:
+
+- `objectiveai-sdk-rs/src/cli/command/command.rs` — `Subcommand`, `Request`,
+  `ResponseItem` and `ListenerExecution` all enumerate the same 13 groups, with
+  **zero occurrences of "vector"**. There is no vector module at HEAD.
+- `vector/completions/http.rs:9-16` — both entry points take `&HttpClient` and
+  are gated `#[cfg(feature = "http")]` (`mod.rs:9-13`), while
+  `objectiveai-mcp-plugin-framework-rs/Cargo.toml:21` pins the SDK
+  `default-features = false, features = ["cli","cli-executor"]`. **The function
+  is not compiled into a plugin binary at all.**
+- `swarms --help` → `get | list | publish`. Nothing *executes* a swarm; it is a
+  resource, not an execution mode.
+- `agents spawn request-schema` — `top_logprobs` is marked *"Vector completions
+  only. Ignored for agent completions."*
+
+**So the shape is:**
+
+| layer | what it does |
+|---|---|
+| **viewer half** | one `agents spawn` of an orchestrator, then `agents logs subscribe` and render. Pure display. Fits the single-in-flight invoke limit. |
+| **script agent** | fans out N judges via `objectiveai.execute(argvs)`, verified parallel by design (`objectiveai-rustpython-wasm/src/main.rs:70-76`). Python, no model, no token cost. |
+| **each judge** | `agents spawn --agent-inline`, one model each. Votes combined with `objectiveai_sdk::Weights` (ungated, available). |
+| **MCP half** | **not needed for scoring.** Build it only when phosphene's judgment must be callable *by other agents* as a tool — the fan-out logic ports unchanged. |
+
+**The cost: no logprobs.** `top_logprobs` is ignored for agent completions, so
+this is discrete voting, not calibrated preference distribution. A real
+downgrade, and it is the platform's headline feature.
+
+**But it is smaller than it looks.** Our own 4-model run was already **7 of 8
+votes one-hot** — only qwen returned a distribution. In practice the signal came
+from *model diversity*, which this preserves completely. Worth re-measuring
+rather than assuming either way.
+
+**Second trade-off:** a flat batch is all-or-nothing — one failed judge kills the
+panel. Wrap each judge in per-command error handling instead.
+
+### Upstream security finding — worth reporting
+
+`objectiveai api config objectiveai-authorization` exists and is readable, so a
+plugin **can read the user's API key and call the API directly**, bypassing the
+daemon entirely. That is precisely the hole "do all work through the daemon /
+that will make it safe" is aimed at, and the conduit
+(`websocket_laboratory.rs:539-554`) has **no command allowlist or denylist**.
+
+Unlike the functions defect, this one is worth telling Ronald about.
 
 ### What survives — nearly everything
 
@@ -133,22 +183,15 @@ The scaffold, `build.mjs`, CI, the five contract assertions, the design tokens,
 all nine research docs, and the verified boot path do not care who orchestrates.
 The tab is a display either way.
 
-### UNVERIFIED, and it is load-bearing
+### The one remaining unknown
 
-**Can an MCP plugin actually reach a vector completion (or equivalent) from
-inside its container, and with what credentials?** The whole redesign rests on
-yes. A workflow was investigating this when the session ended; if its verdict is
-lost, re-run it:
+**Does a nested, COST-BEARING `agents spawn` succeed from inside a script agent,
+with correct lineage?** The investigation only exercised free read-only commands
+through the conduit. Everything above assumes this works.
 
-```
-Workflow({scriptPath: "~/.claude/projects/-Users-maya-phosphene/93a8c66c-a6d5-4f91-a4cd-54d20a9ea59b/workflows/scripts/verify-mcp-scoring-wf_dbdade9b-1ff.js"})
-```
-
-If the answer is **no**, the leading alternative is a script agent orchestrating
-N agent completions with `top_logprobs` and combining the votes itself — a
-hand-rolled swarm. That needs its own verification.
-
-**Do not refactor until this is settled.**
+Cheapest settlement (well under a cent): one script agent fanning out two
+`agents spawn` calls to the smallest model, then `agents instances list` to
+confirm the children are parented correctly.
 
 ### Why functions are going away — the bigger picture
 
