@@ -1,31 +1,28 @@
 /**
- * Phosphene's boot tab — declared in `objectiveai.json` as
- * `viewer.tabs[0]`, opened by the viewer at boot.
+ * Phosphene's boot tab — declared in `objectiveai.json` as `viewer.tabs[0]`.
  *
- * Two contracts this file lives under, both from docs/platform/01-viewer.md:
+ * ARCHITECTURE. The viewer half is a DISPLAY, not the application. It spawns
+ * work as agent completions through the daemon and renders what the agent is
+ * doing; it never reaches an upstream itself. See HANDOFF §"ARCHITECTURE
+ * CHANGED".
  *
- * 1. It receives ONE prop, `arguments`, and nothing else. A tab declared in
- *    the manifest is opened with `arguments: None` — so at boot this is
- *    always undefined. Props arrive only for tabs opened programmatically
- *    via `tabs_open`. (`arguments` is a reserved binding in strict mode;
- *    destructure it under another name.)
+ * Two host contracts this file lives under (docs/platform/01-viewer.md):
+ *   1. It receives ONE prop, `arguments`, and a manifest-declared boot tab is
+ *      always opened with none — so at boot it is undefined. (`arguments` is a
+ *      reserved binding in strict mode; destructure it under another name.)
+ *   2. Everything else comes from the harness: the daemon transport and the
+ *      window's zoom. No theme, no router, no host state.
  *
- * 2. Everything else comes from the harness the bootstrap wraps us in —
- *    the daemon transport and the window's zoom. There is no theme, no
- *    router, and no host state beyond that.
- *
- * The tab renders inside a document that already carries the viewer's own
- * `app.css`: Tailwind preflight, a `color-scheme: dark` html, a 13px
- * flex-column body, and the viewer's `@theme` tokens. We consume those
- * tokens (they are declared, stable API-ish) but never its utility classes
- * — those exist only because the viewer happens to use them today, and a
- * refactor upstream would delete them silently. See spikes/01-calibration §C.
+ * It renders inside a document already carrying the viewer's own `app.css`.
+ * We consume the viewer's `@theme` tokens where they mean the same thing to us,
+ * but never its Tailwind utility classes — those exist only because the viewer
+ * happens to use them today (spikes/01-calibration §C).
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Client, functionsListExecute } from "@objectiveai/sdk";
 import { transport } from "./transport";
+import { inventDirections, type Direction, type Invention } from "./lib/directions";
 
-/** Mirrors the host's `TabComponentProps`. */
 interface TabProps {
   arguments?: unknown;
 }
@@ -35,17 +32,18 @@ type Health =
   | { state: "ready"; roundTripMs: number }
   | { state: "unavailable"; reason: string };
 
+type Run =
+  | { phase: "idle" }
+  | { phase: "inventing"; brief: string; aih?: string; streamed: number }
+  | { phase: "done"; brief: string; invention: Invention }
+  | { phase: "failed"; brief: string; reason: string };
+
 /**
- * Prove the daemon is actually REACHABLE before any feature depends on it. A
- * failure here is the difference between "the plugin is broken" and "the
- * daemon is down", and the two look identical from a blank tab.
- *
- * This has to make a real round trip. `Client.viewer(transport)` is a
- * synchronous constructor — it succeeds whether or not anything is listening,
- * so checking it alone measures nothing. `functions list` is the cheapest
- * read-only command that proves the whole path: SDK → Tauri IPC →
- * `daemon_execute` → daemon → response stream. An empty result is a healthy
- * answer; only an error item or a throw means unreachable.
+ * Prove the daemon is REACHABLE, not merely that a client object constructed.
+ * `Client.viewer(transport)` is a synchronous constructor and succeeds whether
+ * or not anything is listening, so this makes a real round trip: `functions
+ * list` is the cheapest read-only command that exercises SDK → Tauri IPC →
+ * `daemon_execute` → daemon → response stream. An empty result is healthy.
  */
 async function checkDaemon(): Promise<Health> {
   const started = performance.now();
@@ -56,30 +54,73 @@ async function checkDaemon(): Promise<Health> {
     for await (const item of stream as AsyncIterable<unknown>) {
       const chunk = item as { type?: string; message?: unknown };
       if (chunk?.type === "error") {
-        const reason = JSON.stringify(chunk.message).slice(0, 160);
         console.error("phosphene: daemon returned an error", chunk.message);
-        return { state: "unavailable", reason };
+        return {
+          state: "unavailable",
+          reason: JSON.stringify(chunk.message).slice(0, 160),
+        };
       }
-      break; // one item is enough to prove the round trip
+      break;
     }
     const roundTripMs = Math.round(performance.now() - started);
-    // Boot telemetry. `console.*` is the sanctioned path to the viewer's log
-    // inbox (see the note in the catch below), and "did phosphene come up, and
-    // could it reach the daemon" is exactly what you want in that inbox when
-    // someone reports a blank tab.
+    // console.* is the sanctioned path to the viewer's log inbox — the host
+    // injects a capture script into every webview. "Did phosphene come up and
+    // could it reach the daemon" is exactly what belongs there when someone
+    // reports a blank tab.
     console.info(`phosphene: ready · daemon round trip ${roundTripMs}ms`);
     return { state: "ready", roundTripMs };
   } catch (error) {
-    // console.* is the sanctioned path to the viewer's log inbox — the host
-    // injects a capture script into every webview, so this lands in
-    // viewer-logs under this tab's TITLE with no cooperation from us.
     console.error("phosphene: daemon transport unavailable", error);
     return { state: "unavailable", reason: String(error).slice(0, 200) };
   }
 }
 
+function DirectionCard({ direction }: { direction: Direction }) {
+  const [bg, surface, accent, text, muted] = direction.palette;
+  return (
+    <article className="ph-card">
+      <header className="ph-card-head">
+        <h3 className="ph-card-name">{direction.name}</h3>
+        {direction.mood && <span className="ph-card-mood">{direction.mood}</span>}
+      </header>
+
+      {/* The legacy app invented palettes, fed them to generation, and rendered
+          them nowhere (docs/legacy §8). Showing them is the point of a card. */}
+      <div className="ph-swatches" aria-label="palette">
+        {direction.palette.map((hex, i) => (
+          <span
+            key={`${hex}-${i}`}
+            className="ph-swatch"
+            style={{ backgroundColor: hex }}
+            title={["background", "surface", "accent", "text", "muted"][i] + " " + hex}
+          />
+        ))}
+      </div>
+
+      <p className="ph-card-desc">{direction.description}</p>
+
+      {/* A miniature of the direction, drawn with its own colours — the
+          cheapest honest preview before real generation exists. */}
+      <div className="ph-mini" style={{ backgroundColor: bg, borderColor: muted }}>
+        <div className="ph-mini-bar" style={{ backgroundColor: surface }}>
+          <span className="ph-mini-dot" style={{ backgroundColor: accent }} />
+        </div>
+        <div className="ph-mini-line" style={{ backgroundColor: text, width: "62%" }} />
+        <div className="ph-mini-line" style={{ backgroundColor: muted, width: "88%" }} />
+        <div className="ph-mini-line" style={{ backgroundColor: muted, width: "74%" }} />
+        <div className="ph-mini-cta" style={{ backgroundColor: accent }} />
+      </div>
+
+      <p className="ph-card-type">{direction.typography}</p>
+    </article>
+  );
+}
+
 export default function Phosphene({ arguments: _args }: TabProps) {
   const [health, setHealth] = useState<Health>({ state: "connecting" });
+  const [brief, setBrief] = useState("");
+  const [run, setRun] = useState<Run>({ phase: "idle" });
+  const abort = useRef<{ aborted: boolean }>({ aborted: false });
 
   useEffect(() => {
     let disposed = false;
@@ -88,20 +129,123 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     });
     return () => {
       disposed = true;
+      abort.current.aborted = true;
     };
   }, []);
+
+  const invent = useCallback(async () => {
+    const text = brief.trim();
+    if (text.length === 0 || run.phase === "inventing") return;
+    abort.current = { aborted: false };
+    const signal = abort.current;
+    setRun({ phase: "inventing", brief: text, streamed: 0 });
+    try {
+      const client = Client.viewer(await transport());
+      const invention = await inventDirections(
+        client,
+        text,
+        (p) =>
+          setRun((prev) =>
+            prev.phase === "inventing"
+              ? { ...prev, aih: p.aih, streamed: p.streamed }
+              : prev,
+          ),
+        signal,
+      );
+      if (!signal.aborted) setRun({ phase: "done", brief: text, invention });
+    } catch (error) {
+      console.error("phosphene: invention failed", error);
+      if (!signal.aborted) {
+        setRun({ phase: "failed", brief: text, reason: String(error).slice(0, 300) });
+      }
+    }
+  }, [brief, run.phase]);
+
+  const busy = run.phase === "inventing";
 
   return (
     <div className="phosphene">
       <header className="phosphene-header">
         <h1 className="phosphene-title">phosphene</h1>
         <p className="phosphene-subtitle">
-          Design iteration and judgment. Describe a brief, get contrasting
-          directions rendered across shared states, and let a swarm score them.
+          Describe a brief. Phosphene invents contrasting design directions, then
+          renders and judges them.
         </p>
       </header>
 
-      <section className="phosphene-status" aria-live="polite">
+      <section className="ph-composer">
+        <label className="ph-label" htmlFor="ph-brief">
+          brief
+        </label>
+        <textarea
+          id="ph-brief"
+          className="ph-input"
+          rows={3}
+          value={brief}
+          disabled={busy}
+          placeholder="A dating app where pickles match on brine compatibility"
+          onChange={(e) => setBrief(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void invent();
+          }}
+        />
+        <div className="ph-composer-row">
+          <button
+            type="button"
+            className="ph-button"
+            onClick={() => void invent()}
+            disabled={busy || brief.trim().length === 0 || health.state !== "ready"}
+          >
+            {busy ? "inventing…" : "invent directions"}
+          </button>
+          <span className="ph-hint">⌘↵</span>
+        </div>
+      </section>
+
+      {run.phase === "inventing" && (
+        <section className="ph-progress" aria-live="polite">
+          <span className="phosphene-dot phosphene-dot--connecting" aria-hidden="true" />
+          <span>
+            inventing directions
+            {run.streamed > 0 && ` · ${(run.streamed / 1024).toFixed(1)} KB streamed`}
+          </span>
+          {run.aih && <code className="ph-aih">{run.aih.split("/").pop()}</code>}
+        </section>
+      )}
+
+      {run.phase === "failed" && (
+        <section className="ph-error" role="alert">
+          <strong>invention failed</strong>
+          <span>{run.reason}</span>
+        </section>
+      )}
+
+      {run.phase === "done" && (
+        <section className="ph-results">
+          <div className="ph-results-head">
+            <h2 className="ph-results-title">
+              {run.invention.directions.length} directions
+            </h2>
+            {run.invention.states.length > 0 && (
+              <p className="ph-states">
+                states:{" "}
+                {run.invention.states.map((s) => (
+                  <span key={s} className="ph-state">
+                    {s}
+                  </span>
+                ))}
+              </p>
+            )}
+          </div>
+          <div className="ph-grid">
+            {run.invention.directions.map((d, i) => (
+              <DirectionCard key={`${d.name}-${i}`} direction={d} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      <footer className="phosphene-status" aria-live="polite">
         <span
           className={`phosphene-dot phosphene-dot--${health.state}`}
           aria-hidden="true"
@@ -113,12 +257,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         {health.state === "unavailable" && (
           <span>daemon unavailable — {health.reason}</span>
         )}
-      </section>
-
-      <p className="phosphene-note">
-        Scaffolded and verified. The brief composer, the board, and the review
-        come next.
-      </p>
+      </footer>
     </div>
   );
 }
