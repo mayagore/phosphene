@@ -1,0 +1,199 @@
+/**
+ * One agent completion through the daemon, folded into one string.
+ *
+ * ARCHITECTURE (HANDOFF §"ARCHITECTURE CHANGED"): every unit of work phosphene
+ * does is an AGENT COMPLETION spawned through the daemon. No functions — that
+ * layer is being replaced by a provider spec. The viewer spawns and displays;
+ * it never reaches an upstream itself.
+ *
+ * This module is the single place that knows the request shape and the stream
+ * shape, because both have sharp edges (see `system_prompt` and the delta
+ * accumulation below) and two copies would grow apart.
+ */
+import { agentsSpawnExecuteStreaming, type CommandExecutor } from "@objectiveai/sdk";
+
+/** Cheap and reliable at structured output. Tunable — quality work later. */
+export const DEFAULT_MODEL = "openai/gpt-4o-mini";
+
+export interface AgentRun {
+  system: string;
+  user: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  /** Hard ceiling handed to the daemon. */
+  timeoutSeconds?: number;
+  /**
+   * Abort if no chunk arrives for this long. This is the lesson legacy paid
+   * seven commits for (docs/legacy §5): hang detection belongs on the GAP
+   * BETWEEN CHUNKS, not on total duration, because a healthy generation
+   * legitimately runs for many minutes while a wedged one goes silent
+   * immediately. `timeoutSeconds` is the labelled backstop and must strictly
+   * outlast this.
+   */
+  stallSeconds?: number;
+}
+
+export interface AgentProgress {
+  /** The agent instance hierarchy, once the daemon has minted it. */
+  aih?: string;
+  /** Characters of assistant output so far. */
+  streamed: number;
+}
+
+/** Cooperative cancellation. A plain object so a caller can flip it after the
+ * fact without threading an AbortController through every layer. */
+export interface AbortFlag {
+  aborted: boolean;
+}
+
+/**
+ * Spawn one agent and return everything it said.
+ *
+ * The stream's first item is a bare string (the agent instance hierarchy);
+ * every later item is an `agent.completion.chunk` whose `messages[].content`
+ * are DELTAS accumulated by `index`. Verified against a live capture.
+ */
+export async function runAgent(
+  executor: CommandExecutor,
+  run: AgentRun,
+  onProgress?: (p: AgentProgress) => void,
+  signal?: AbortFlag,
+): Promise<string> {
+  const stallMs = (run.stallSeconds ?? 120) * 1000;
+  const request = {
+    agent: {
+      by: "ref",
+      agent: {
+        Resolved: {
+          upstream: "openrouter",
+          model: run.model ?? DEFAULT_MODEL,
+          temperature: run.temperature ?? 0.9,
+          max_tokens: run.maxTokens ?? 2000,
+          plugins: [],
+          // `system_prompt` is {role, content}, NOT a bare string — a string
+          // fails deserialization with the untagged-enum error that names the
+          // whole agent union and points nowhere useful. Role is
+          // "system" | "developer" (agent.openrouter.SystemPromptRole).
+          system_prompt: { role: "system", content: run.system },
+        },
+      },
+    },
+    message: { Simple: run.user },
+    timeout_seconds: run.timeoutSeconds ?? 180,
+  };
+
+  const parts = new Map<number, string>();
+  let aih: string | undefined;
+
+  const stream = agentsSpawnExecuteStreaming(executor, request as never);
+  // Driven by hand rather than `for await` so each `next()` can be raced
+  // against the stall watchdog.
+  const iterator = (stream as AsyncIterable<unknown>)[Symbol.asyncIterator]();
+  try {
+    for (;;) {
+      if (signal?.aborted) break;
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stalled = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`the agent went silent for ${run.stallSeconds ?? 120}s`)),
+          stallMs,
+        );
+      });
+      let next: IteratorResult<unknown>;
+      try {
+        next = await Promise.race([iterator.next(), stalled]);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (next.done) break;
+
+      const item = next.value;
+      if (typeof item === "string") {
+        aih = item;
+        onProgress?.({ aih, streamed: 0 });
+        continue;
+      }
+      const chunk = item as {
+        type?: string;
+        message?: unknown;
+        messages?: Array<{ role?: string; index?: number; content?: unknown }>;
+      };
+      if (chunk?.type === "error") {
+        throw new Error(
+          `the agent failed: ${JSON.stringify(chunk.message).slice(0, 200)}`,
+        );
+      }
+      for (const m of chunk.messages ?? []) {
+        if (m.role !== "assistant" || typeof m.content !== "string") continue;
+        const i = m.index ?? 0;
+        parts.set(i, (parts.get(i) ?? "") + m.content);
+      }
+      onProgress?.({
+        aih,
+        streamed: [...parts.values()].reduce((n, s) => n + s.length, 0),
+      });
+    }
+  } finally {
+    // Whether we stalled, threw, or were cancelled, tell the stream we are done
+    // with it — an orphaned `next()` otherwise keeps the lane alive.
+    await iterator.return?.(undefined).catch(() => undefined);
+  }
+
+  const text = [...parts.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, s]) => s)
+    .join("");
+  if (text.trim().length === 0 && !signal?.aborted) {
+    // Distinguish "model said nothing" from "we cannot parse" — the legacy app
+    // reported the former as a parser bug for weeks.
+    throw new Error("the agent returned an empty response");
+  }
+  return text;
+}
+
+/**
+ * Recover a JSON object from a model's prose.
+ *
+ * Agent completions cannot constrain output shape — `output_mode` is documented
+ * "Vector completions only. Ignored for agent completions", and the openrouter
+ * agent schema carries no `response_format`. So the contract is prose, and this
+ * is the cost of that. Three layers, deliberately: the legacy app grew a
+ * four-layer salvage ladder because it deleted its schemas, and this is the
+ * smallest honest version of the same job.
+ */
+export function parseJsonLoose(text: string): unknown {
+  const fenced = text.replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1").trim();
+  try {
+    return JSON.parse(fenced);
+  } catch {
+    // Fall through to brace matching.
+  }
+  const start = fenced.search(/[{[]/);
+  if (start === -1) throw new Error("no JSON found in the model's response");
+  const open = fenced[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < fenced.length; i++) {
+    const ch = fenced[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') inString = !inString;
+    if (inString) continue;
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return JSON.parse(fenced.slice(start, i + 1));
+    }
+  }
+  throw new Error("unterminated JSON in the model's response");
+}

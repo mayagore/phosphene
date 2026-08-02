@@ -24,12 +24,14 @@
 
 @import "./tokens.css";
 
+/* No max-width on the root: the board is as wide as (directions × 400px) and
+ * must not be squeezed — a design judged at a reflowed width is a different
+ * design. Prose measure is constrained per-block instead. */
 .phosphene {
   display: flex;
   flex-direction: column;
   gap: var(--ph-spacing-6);
   padding: var(--ph-spacing-7);
-  max-width: 720px;
   font-family: var(--ph-font-sans);
   color: var(--ph-color-text-primary);
 }
@@ -38,6 +40,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--ph-spacing-2);
+  max-width: 720px;
 }
 
 .phosphene-title {
@@ -219,7 +222,7 @@
 
 .ph-results-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--ph-spacing-4);
   flex-wrap: wrap;
 }
@@ -325,4 +328,187 @@
   font-size: var(--ph-text-caption);
   color: var(--ph-color-text-muted);
   font-family: ui-monospace, monospace;
+}
+
+/* ── Board ────────────────────────────────────────────────────────────────
+ *
+ * Directions across, shared states down. Cells are the artboard's real
+ * 400×720 scaled by transform — never resized, never reflowed, because a
+ * design judged at a different width is a different design.
+ *
+ * Geometry that must agree with phosphene.tsx: THUMB_SCALE (0.55) against
+ * ARTBOARD_WIDTH/HEIGHT (400×720) gives the 220×396 box below. The iframe
+ * keeps its true size and is scaled from the top-left corner into it. */
+
+.ph-board {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-4);
+}
+
+.ph-board-grid {
+  display: grid;
+  gap: var(--ph-spacing-3);
+  align-items: center;
+  /* The board can exceed the window; scroll it rather than shrink artboards. */
+  overflow-x: auto;
+  padding-bottom: var(--ph-spacing-2);
+}
+
+.ph-board-col {
+  font-size: var(--ph-text-heading);
+  line-height: var(--ph-text-heading--line-height);
+  font-weight: 600;
+  color: var(--ph-color-text-primary);
+  padding-bottom: var(--ph-spacing-1);
+  border-bottom: 1px solid var(--ph-color-border-strong);
+}
+
+.ph-board-row {
+  font-size: var(--ph-text-label);
+  line-height: var(--ph-text-label--line-height);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-text-muted);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  justify-self: center;
+}
+
+.ph-artboard {
+  position: relative;
+  width: 220px;
+  height: 396px;
+  overflow: hidden;
+  border: 1px solid var(--ph-color-border-subtle);
+  border-radius: var(--ph-radius-sm);
+  /* Neutral in both modes — chrome never tints generated work. */
+  background: var(--ph-color-artboard-bg);
+}
+
+.ph-artboard--pending,
+.ph-artboard--generating,
+.ph-artboard--failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ph-spacing-2);
+  padding: var(--ph-spacing-4);
+  background: var(--ph-color-surface-sunken);
+}
+
+.ph-artboard--failed { border-color: var(--ph-color-score-low); }
+
+.ph-artboard-note {
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+  color: var(--ph-color-text-muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.ph-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  transform-origin: top left;
+  /* The thumbnail is a picture. Interaction goes through the open button, so a
+   * sandboxed document can never take a click or focus from the tab. */
+  pointer-events: none;
+}
+
+.ph-artboard-open {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: var(--ph-spacing-3);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.ph-artboard-open:hover,
+.ph-artboard-open:focus-visible {
+  opacity: 1;
+  outline: none;
+  background: linear-gradient(to top, var(--ph-color-surface-canvas), transparent 45%);
+}
+
+.ph-artboard-open span {
+  font: inherit;
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-accent-on);
+  background: var(--ph-color-accent-default);
+  border-radius: var(--ph-radius-pill);
+  padding: var(--ph-spacing-1) var(--ph-spacing-3);
+}
+
+/* ── Full-size view ───────────────────────────────────────────────────── */
+
+.ph-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ph-spacing-6);
+  /* Deliberately absolute black in both modes, for the same reason artboards
+   * are neutral: the scrim must not tint the work behind it. */
+  background: rgb(0 0 0 / 0.66);
+}
+
+.ph-zoom-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-3);
+  max-height: 100%;
+}
+
+.ph-zoom-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ph-spacing-3);
+}
+
+.ph-zoom-name {
+  font-size: var(--ph-text-heading);
+  line-height: var(--ph-text-heading--line-height);
+  color: var(--ph-color-text-primary);
+}
+
+.ph-zoom-state {
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-text-muted);
+}
+
+.ph-zoom-close {
+  font: inherit;
+  font-size: var(--ph-text-label);
+  margin-left: auto;
+  color: var(--ph-color-text-secondary);
+  background: transparent;
+  border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-sm);
+  padding: var(--ph-spacing-1) var(--ph-spacing-3);
+  cursor: pointer;
+}
+
+.ph-zoom-close:hover { color: var(--ph-color-text-primary); }
+
+.ph-zoom-frame {
+  border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-sm);
+  background: var(--ph-color-artboard-bg);
+  max-height: 100%;
 }
