@@ -58,7 +58,7 @@ The approved plan lives at
 | Phase 1 — calibration spikes A–E | **Done** → `docs/spikes/01-calibration.md` |
 | Phase 2 — decisions (§6) | **Done** — see below |
 | Phase 3 — standards + CI (§7) | **Done** — `pnpm run verify`, `.github/workflows/ci.yml`, CI green |
-| Phase 4 — build (§8) | **Started** — the plugin scaffolds, builds, and boots |
+| Phase 4 — build (§8) | **Paused** — scaffold boots; architecture changed, see the warning above |
 
 ## The §6 decisions, as made
 
@@ -72,38 +72,127 @@ The approved plan lives at
 5. **Toolchain** — the scaffold's esbuild. Vite strips entry exports, which is
    the bug we fixed upstream in v2.2.15; a Vite-built plugin hits it silently.
 
+## ⚠️ ARCHITECTURE CHANGED — 2026-08-01, read this first
+
+**Ronald (the platform owner), asked directly whether functions are staying:**
+
+> "I would refactor it to use agent completions directly and avoid using the
+> functions feature. that will make it safe. also remember to do all work
+> through the daemon — the viewer shouldn't do work directly, it should moreso
+> be a display for what the agent is doing using tools. you can also use script
+> agents to call tools arbitrarily"
+
+**This inverts the design.** We built phosphene as an app that orchestrates:
+it calls the API, generates, scores, renders. Ronald describes phosphene as a
+**display onto an agent that orchestrates**, with the work in the daemon and
+the agent reaching phosphene's tools.
+
+It also vindicates Pass 3, which found the scaffold's archetype is "the viewer
+half is the human end of an agent's workflow" (`docs/platform/02-plugin-contract.md`
+§7). That was flagged at the time and we chose the app model anyway.
+
+### Why "no functions" and "through the daemon" are one statement
+
+From a viewer plugin, verified 2026-08-01:
+
+| path | daemon-reachable? |
+|---|---|
+| agent completions | YES — `agents spawn` → `/execute` |
+| **functions** | YES → but being deprecated |
+| **vector completions** | **NO — HTTP API only** |
+
+The viewer's daemon proxy exposes exactly `/execute`, `/listen`,
+`/agents/instances/list`, `/laboratories/list`, `/channels` — no vector route.
+The CLI has no vector command, so `/execute` cannot reach one either. And the
+SDK's `vectorCompletionsCreateVectorCompletion` takes an `ObjectiveAI` HTTP
+client, not a `CommandExecutor` — i.e. an API key in the webview, which is
+exactly what Ronald ruled out.
+
+**Functions were the only daemon-safe route to swarm scoring.** Remove them and
+scoring has to move somewhere a key is legitimate: a plugin container.
+
+### What this changes
+
+- **§6.3 FLIPS — phosphene needs the MCP half.** We decided viewer-only; that
+  decision is now wrong. Viewer-only can display an agent's work but cannot
+  score without violating the daemon rule.
+- **§6.1 narrows**: the viewer half is a display surface, not the app.
+- **The review is not built on functions.** Scoring goes plugin-side, invoked by
+  an agent as a tool.
+- **Script agents** (`.agents/skills/script-agents/SKILL.md`) run Python on the
+  client's embedded runtime with no model and no token cost, and can call plugin
+  tools — a strong candidate for deterministic orchestration.
+
+### What survives — nearly everything
+
+The scaffold, `build.mjs`, CI, the five contract assertions, the design tokens,
+all nine research docs, and the verified boot path do not care who orchestrates.
+The tab is a display either way.
+
+### UNVERIFIED, and it is load-bearing
+
+**Can an MCP plugin actually reach a vector completion (or equivalent) from
+inside its container, and with what credentials?** The whole redesign rests on
+yes. A workflow was investigating this when the session ended; if its verdict is
+lost, re-run it:
+
+```
+Workflow({scriptPath: "~/.claude/projects/-Users-maya-phosphene/93a8c66c-a6d5-4f91-a4cd-54d20a9ea59b/workflows/scripts/verify-mcp-scoring-wf_dbdade9b-1ff.js"})
+```
+
+If the answer is **no**, the leading alternative is a script agent orchestrating
+N agent completions with `top_logprobs` and combining the votes itself — a
+hand-rolled swarm. That needs its own verification.
+
+**Do not refactor until this is settled.**
+
 ## In flight, 2026-08-01
 
-**A workflow is deriving the function-execution wire shape** three independent
-ways (generated JSON schemas / SDK types / the live CLI's own schemas), then
-adversarially reconciling them. When it lands: run the cheapest possible real
-function execution with a DIVERSE swarm.
+### The swarm works, and diversity is what makes it work
 
-Standing authorization from Maya: run it as soon as the derivation is ready.
+A real 4-model function execution ran on 2026-08-01 — **$0.000266, 30s, 78
+chunks**, no task errors, overall `0.586`. Artifacts in `~/oai-swarm/`
+(`function.json`, `profile.json`, `input.json`, `stream.ndjson`).
 
-The execution path is confirmed reachable and needs no publishing step —
-`functions execute standard` takes `--function-inline`, `--profile-inline`, and
-`--input-inline`. Both `standard` and `swiss-system` exist as siblings; Swiss
-System is the pooling mode built for scoring N candidates against each other,
-which is phosphene's shape.
+**Four models, one design, per-dimension votes:**
 
-**Three things to check in the output:**
-1. Does it stream at all — the first real function execution by anyone here.
-2. Where `split_index` / `task_index` actually appear. The SDK's own
-   `…TaskChunkMerged` type DROPS both (`docs/platform/02-plugin-contract.md`
-   §11) — the exact field whose loss made the legacy board read 0.52.
-3. **Whether a diverse swarm produces a non-degenerate vote distribution.**
-   Nobody has ever tested this. The old app's swarm was N byte-identical agents,
-   so its agreement metric measured one model's sampling variance. This is the
-   first real test of the platform's central claim.
+| | gemma-3-27b | llama-3.1-8b | mistral-nemo | qwen3-30b |
+|---|---|---|---|---|
+| visual hierarchy | strong | **poor** | strong | **exceptional** |
+| contrast | adequate | weak | **strong** | strong |
 
-## Two standing unknowns
+They span the whole ladder — one model says *poor* where another says
+*exceptional* on identical input. **That is genuine inter-model disagreement,
+not sampling noise, and a single-model swarm would have reported one of those
+with false confidence.** This is the strongest evidence that phosphene belongs
+on this platform, and it is the first time anyone has tested the claim — the
+legacy app's "swarm" was N byte-identical agents.
 
-- **Collective judgment is unvalidated.** Neither the old app nor this session
-  has ever run a swarm of genuinely different models. It is phosphene's whole
-  reason to be on this platform.
-- **No function execution has ever run.** Agent completions are verified end to
-  end; the layer the *review* runs on is not.
+**The catch: 7 of 8 votes came back ONE-HOT.** Only qwen returned a real
+distribution (`0.231 adequate / 0.768 strong`). So the value we captured came
+from model *diversity*, not from distributional logprob voting. Unexplained —
+candidates are cheap models being sharp on a 5-way single-token choice,
+`max_tokens: 16` being too tight, or `top_logprobs: 20` not reaching some
+upstreams. **Worth a spike**: if distributional voting cannot be made to work,
+lean on more diverse agents rather than richer per-agent signal.
+
+Carry this forward regardless of how scoring is wired: the 5-rung
+natural-language ladder, and diversity as the source of signal.
+
+### Verified facts worth not rediscovering
+
+- `split_index` is **absent** when `split:false`; `task_index` is on every
+  vector chunk. `split` is the *batch* axis (score many candidates), not the
+  dimension axis. The legacy app's flagship bug lived in a path we may not need.
+- **`functionsExecuteStandardExecuteStreaming` is unusable at 2.2.15** — it
+  zod-validates responses, the server strips `plugins` from echoed agents, and
+  it throws out of an async iterator. Consume raw via `executor.execute()`.
+  Fifth upstream defect; unreported.
+- `{"$special":"task_output_weighted_sum"}` is correct for a ladder collapse.
+  Hand-writing `output['scores'][i]` fails *after* paying for inference —
+  `output` is a bare list.
+- Mock agents (`"upstream":"mock"`) are a free syntax linter for expressions and
+  transport. They never vote; never read their numbers.
 
 **Sequencing change, 2026-07-31.** The boot check moves between Pass 3 and Pass 4.
 Not before Pass 3, because Pass 3 *is* the scaffold and running it unread is
