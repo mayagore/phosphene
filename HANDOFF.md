@@ -1,49 +1,52 @@
 # Phosphene rebuild — handoff
 
-**Paused:** 2026-07-31. Pick up from here in a new session.
+**Paused:** 2026-08-01. Pick up from here in a new session.
 
-## Where the new repo goes — DECIDED
+**Read in this order:** the ⚠️ ARCHITECTURE CHANGED section below (it supersedes
+decision §6.3), then `docs/why-rebuild.md` (the brief, in Maya's words), then
+whichever `docs/platform/*` artifact covers what you are about to touch.
 
-**GitHub: `mayagore/phosphene`. Local: `~/Programming/phosphene`.**
+## Start here
 
-Forced, not chosen: **the repo name is the plugin name on release.** An agent
-declares `{owner, name, version}` and the laboratory host fetches
-`github.com/<owner>/<name>` at the `v`-prefixed tag.
-
-The old repo is **not deleted** — it moves aside:
-
-1. ~~Rename `mayagore/phosphene` → `mayagore/phosphene-legacy`.~~
-   **DONE 2026-07-31.**
-2. ~~Repoint the local clone: `git -C ~/phosphene remote set-url origin
-   https://github.com/mayagore/phosphene-legacy.git`.~~ **DONE 2026-07-31**,
-   verified against `ee47aea`.
-3. ~~Create `mayagore/phosphene` empty.~~ **DONE 2026-07-31** — public, no
-   initial commit, so the scaffold's first commit lands clean.
-4. Scaffold at `~/Programming/phosphene`; `git init`; point `origin` at
-   `https://github.com/mayagore/phosphene.git`. **Not done.**
-5. Move `~/phosphene-rebuild/docs/` in; retire the staging dir. **Not done.**
-
-Locally `~/phosphene` stays put as reference, now tracking `phosphene-legacy`.
-
-**Why step 2 mattered:** GitHub redirects `mayagore/phosphene` to the legacy repo
-only until something else claims that name. The moment the new repo is created at
-step 3 the redirect dies, and any clone still pointing at the old URL would
-silently start talking to the new empty repo — which looks exactly like data
-loss. That is now pre-empted.
-
-## What this directory is
-
-Staging for the rebuild's research artifacts **only** — not the future repo.
-These docs move into `~/Programming/phosphene` at step 4 above.
-
-```
-docs/why-rebuild.md              the brief (Maya's words) — READ FIRST
-docs/platform/00-what-this-is.md Pass 1 artifact — the platform, foundations
-HANDOFF.md                       this file
+```bash
+cd ~/Programming/phosphene
+pnpm install && pnpm run verify        # typecheck + build + 5 contract assertions
 ```
 
-The approved plan lives at
-`/Users/maya/.claude/plans/we-will-need-to-elegant-truffle.md`.
+To see it running in the viewer:
+
+```bash
+pnpm run dev &                          # watch build -> dist/
+objectiveai development plugins viewer create \
+  --owner mayagore --name phosphene --version v0.1.0 --path "$PWD"
+objectiveai viewer spawn
+```
+
+The tab logs `phosphene: ready · daemon round trip Nms` to
+`~/.objectiveai/state/default/viewer/viewer-logs/`. A blank tab means look there
+first. Tear down with `development plugins viewer delete` (same trio).
+
+**Platform floor: ObjectiveAI ≥ 2.2.15.** Earlier releases cannot render ANY
+plugin tab — every entry chunk shipped with its exports stripped. Found here,
+fixed upstream in ObjectiveAI#302.
+
+## Repo layout — settled
+
+**GitHub `mayagore/phosphene`, local `~/Programming/phosphene`.** Forced, not
+chosen: the repo name IS the plugin name on release.
+
+The old app lives at `mayagore/phosphene-legacy`, checked out at
+`~/phosphene`. **Reference only — never modify it.** It has one uncommitted
+change of Maya's (`scripts/install-dev.sh`) that predates this work; leave it.
+Its postmortem is `docs/legacy/00-the-old-app.md`, and the verdict is: take the
+prompts, the rubric and the design tokens; leave the code.
+
+The `~/phosphene-rebuild/` staging directory is retired — everything moved here
+and is committed. It can be deleted.
+
+The original approved plan is at
+`/Users/maya/.claude/plans/we-will-need-to-elegant-truffle.md`. It is still
+broadly right, but §6.3 is now superseded — see below.
 
 ## Where we are
 
@@ -65,8 +68,9 @@ The approved plan lives at
 1. **What phosphene is** — an ObjectiveAI plugin.
 2. **Repo** — `mayagore/phosphene`, local `~/Programming/phosphene`. Old repo is
    `mayagore/phosphene-legacy`, kept as reference, never modified.
-3. **Halves** — viewer only. `scaffold.sh` emits both halves, so this was a
-   hand-copy of the viewer scaffold; its own README documents that as supported.
+3. **Halves** — ~~viewer only~~ **SUPERSEDED 2026-08-01 — see the ARCHITECTURE
+   CHANGED section below. Phosphene needs the MCP half.** The viewer scaffold
+   was hand-copied (`scaffold.sh` emits both halves); that part still stands.
 4. **Legacy reuse** — prompts, the scoring rubric, and the design tokens. Not the
    code. → `docs/legacy/00-the-old-app.md`.
 5. **Toolchain** — the scaffold's esbuild. Vite strips entry exports, which is
