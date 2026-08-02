@@ -183,15 +183,59 @@ The scaffold, `build.mjs`, CI, the five contract assertions, the design tokens,
 all nine research docs, and the verified boot path do not care who orchestrates.
 The tab is a display either way.
 
-### The one remaining unknown
+### ~~The one remaining unknown~~ — SETTLED 2026-08-02
 
-**Does a nested, COST-BEARING `agents spawn` succeed from inside a script agent,
-with correct lineage?** The investigation only exercised free read-only commands
-through the conduit. Everything above assumes this works.
+**Does a nested, COST-BEARING `agents spawn` succeed from inside a script agent?
+YES.** Verified twice, in two separate sessions, against the log tier.
 
-Cheapest settlement (well under a cent): one script agent fanning out two
-`agents spawn` calls to the smallest model, then `agents instances list` to
-confirm the children are parented correctly.
+A script agent calling `objectiveai.execute(argvs)` with two judge argvs returns
+real instance handles (`FANOUT_RESULT [["daemon/6JSFmNWghnguySl3M1Lgt0-…`) and both
+judges issue completion requests and answer:
+
+| log id | time (UTC) | row |
+|---|---|---|
+| 1637 | 00:29:42 | `REQ openai/gpt-4o-mini` |
+| 1638 | | → `Bad.` |
+| 1640 | 00:29:44 | `REQ mistralai/mistral-nemo` |
+| 1641 | | → `Bad` |
+
+**The judge that came back empty on 2026-08-01 was a transient upstream failure,
+not a batch defect.** Log row 1632 is explicit:
+
+```json
+{"code":500,"message":{"kind":"openrouter","error":{"kind":"stream_error","error":"Stream ended"}}}
+```
+
+Two consequences, and the second is the useful one:
+
+1. Neither the model nor the 8-token cap is implicated — mistral-nemo answered
+   normally on the rerun.
+2. **The failure is logged, so a missing judge is detectable.** Per-judge error
+   handling is still mandatory, but it can be *explicit*: detect the error row
+   against that seat and retry or degrade with the panel size recorded. This is
+   strictly better than the feared silent average over a hole.
+
+### READ PATH — most instruments lie, use `logs open --id`
+
+Costly to rediscover, so: **`agents instances get` reports `logged: 0` for runs
+that demonstrably executed**, and `agents logs list --target …` returns zero rows
+in every target form tried (`me`, `instance=L,parent=P`), including against an
+instance whose own aggregate claims `logged: 9`.
+
+The path that works is `agents logs open --id N` over the global BIGSERIAL log.
+Everything above was read that way.
+
+Three traps in that reader:
+
+- **Not-found and real errors both come back as `type: "error"`.** A not-found row
+  has `error: null`; a genuine failure has a populated `error`. A head-search that
+  treats any error as "end of log" stops at the first *real* error row and hides
+  everything after it.
+- **Latency is minutes, not seconds.** A spawn at 00:25 produced its judge
+  completions at 00:29:42. Poll the log tier; do not assume promptness.
+- **`agents wait --inactive` will consume its entire timeout budget.** It returns
+  `"Ok"` for agents that never ran. Never pace a batch with it — a loop of
+  spawn-then-wait dies on its own timeout and the queued spawns are lost.
 
 ### Why functions are going away — the bigger picture
 
@@ -385,9 +429,15 @@ that copy conditional is a phosphene build decision, not an upstream one.
 
 ## Next action
 
-**All four platform passes, the boot check, and the calibration spikes are done.**
-Everything §4 and §5 asked for exists. Next is **§6's five decisions** — the
-first thing in this project that writes phosphene's own design down.
+**Phases 0–3 are done** — four platform passes, the boot check, the calibration
+spikes, §6's five decisions, and §7's standards + CI. **Phase 4, the build, is
+where this is paused.**
+
+The architecture it must be built against is the one in the ⚠️ section above —
+phosphene as a display onto an orchestrating agent, scoring as N agent
+completions fanned out by a script agent. That mechanism is now verified end to
+end (see "SETTLED 2026-08-02"), so the first build task is the panel itself:
+fan out judges, read the log tier, and handle a failed seat explicitly.
 
 **Inference is verified end to end (2026-08-01).** An OpenRouter key is now
 configured, and a real agent completion ran from inside a plugin tab through
@@ -400,21 +450,19 @@ was needed. See `docs/spikes/01-calibration.md` §A.
 swarm — that is §6 work, not calibration. Everything underneath it (transport,
 streaming, identity, persistence, concurrency) is verified.
 
-Inputs §6 now has that it did not before:
+Carried into the build (these were §6's inputs; the decisions themselves are
+recorded under "The §6 decisions, as made" above):
 
-- **§6.1 (what phosphene is)** — Pass 3: the scaffold's archetype is "the viewer
-  half is the human end of an agent's workflow." Pass 1: the judging half is the
-  platform-native half.
-- **§6.3 (viewer-only vs. both halves)** — `scaffold.sh` emits only both halves,
-  so viewer-only is a hand-copy needing a written reason. **But Spike D reversed
-  a key input**: in-page rasterization works, so phosphene does *not* need an MCP
-  half merely to see its own output. Track issue #287 (a JS MCP scaffold) before
-  committing to Rust.
-- **§6.4 (what to consult from the old repo)** — unchanged, default nothing.
-- **§6.5 (toolchain)** — stay on the scaffold's esbuild. Vite strips entry
-  exports (the bug we fixed upstream in v2.2.15); a Vite-built plugin hits it
-  silently in its own repo. Also: make the stylesheet copy conditional, or every
-  `.tsx` save costs a full reload.
+- **Viewer-only stands.** `scaffold.sh` emits both halves, so the viewer-only
+  layout is a hand-copy — that is the written reason. Spike D removed the last
+  argument for an MCP half: in-page rasterization works, so phosphene does not
+  need one merely to see its own output. Track issue #287 (a JS MCP scaffold)
+  before ever committing to Rust.
+- **Toolchain: the scaffold's esbuild.** Vite strips entry exports (the bug we
+  fixed upstream in v2.2.15); a Vite-built plugin hits it silently in its own
+  repo. Also: make the stylesheet copy conditional, or every `.tsx` save costs a
+  full webview reload.
+- **Legacy reuse: prompts, rubric, design tokens. Not the code.**
 
 Standing constraints from the spikes, for whatever §6 decides:
 ship our own stylesheet and consume only `@theme` tokens, never inherited
