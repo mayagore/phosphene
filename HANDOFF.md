@@ -150,6 +150,52 @@ hand-rolled swarm. That needs its own verification.
 
 **Do not refactor until this is settled.**
 
+### Why functions are going away — the bigger picture
+
+Ronald, in the same conversation:
+
+> "we're switching to a P2P architecture and we are working on an API spec for
+> providers
+>
+> it will be like this: https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro
+>
+> but unlike MCP, we will also have a de-facto implementation binary you can run"
+
+**ObjectiveAI is being rebuilt as a protocol** — a spec others implement, plus a
+reference binary — rather than one company's hosted API.
+
+This reframes the "avoid functions" advice. It was never "functions are buggy."
+Functions live in the API layer, and **that whole layer is being replaced** by a
+provider spec. Agent completions and tools survive because they are the parts
+becoming the spec.
+
+**This confirms the biggest risk Pass 4 identified.** `docs/platform/03-changelog.md`
+§4 named issue #301 — *"make objectiveai P2P; consolidate objectiveai-api and
+objectiveai-laboratory into new objectiveai-provider"* — as the only open item
+that could invalidate an entire research pass. It is no longer speculative; it
+is the roadmap. Related: #298/#299/#300 (containerize agent upstreams behind one
+consolidated API spec, with Rust and Python frameworks).
+
+**Three consequences, in order of importance:**
+
+1. **The MCP half is right for a better reason than we knew.** If the future is
+   explicitly MCP-shaped, a plugin exposing tools is on the correct side of the
+   restructure. §6.3's flip is reinforced, not merely forced.
+2. **Build thin, not deep, against today's API shapes.** Keep phosphene's own
+   logic in phosphene's code. Anything that reaches into a specific ObjectiveAI
+   request/response shape should be a thin, replaceable seam — because those
+   shapes are the ones being respecified.
+3. **Expect the plugin contract to move at least once more.** Pass 4 measured
+   ~75% of upstream commits touching our surface and 37 breaking commits across
+   six releases. A P2P restructure will not lower that.
+
+**The disposition this implies:** we are the first real application on a young
+platform that is mid-restructure. That is the reason four of our five upstream
+findings existed at all. Treat "the platform moved" as a normal, planned-for
+event — keep the `docs/platform/*` artifacts current with their `Read at:` SHAs,
+keep the contract assertions in CI, and re-run the boot check on every bump.
+Do not treat it as a crisis, and do not build as though the ground is fixed.
+
 ## In flight, 2026-08-01
 
 ### The swarm works, and diversity is what makes it work
@@ -188,10 +234,23 @@ natural-language ladder, and diversity as the source of signal.
 - `split_index` is **absent** when `split:false`; `task_index` is on every
   vector chunk. `split` is the *batch* axis (score many candidates), not the
   dimension axis. The legacy app's flagship bug lived in a path we may not need.
-- **`functionsExecuteStandardExecuteStreaming` is unusable at 2.2.15** — it
-  zod-validates responses, the server strips `plugins` from echoed agents, and
-  it throws out of an async iterator. Consume raw via `executor.execute()`.
-  Fifth upstream defect; unreported.
+- **`functionsExecuteStandardExecuteStreaming` is broken at 2.2.15 — and it does
+  NOT matter to us.** It zod-validates every stream item and ends in a `parse()`
+  that throws out of an async iterator; the server strips `plugins` from the
+  echoed `agent_inline` while the response schema requires it. Verified on our
+  own run: sent `plugins: []` on 4 agents, 0 came back with it; replaying the
+  77-line stream through `CliCommandFunctionsExecuteStandardResponseItemSchema`
+  gives 69 pass / **8 fail**, all on `agent_inline.plugins` (8 = 4 agents × 2
+  tasks).
+
+  **The agent-completion path is clean.** A real `agents spawn` stream validated
+  against `CliCommandAgentsSpawnResponseItemSchema`: **5 items, 5 pass, 0 fail.**
+  Agent-completion chunks carry no `agent_inline` at all, so the defect
+  structurally cannot occur there.
+
+  **Deliberately NOT reported.** It is a bug in a feature the platform owner has
+  told us to stop using, on a layer being replaced wholesale. Filing it would be
+  noise. Recorded here only so nobody rediscovers it and panics.
 - `{"$special":"task_output_weighted_sum"}` is correct for a ladder collapse.
   Hand-writing `output['scores'][i]` fails *after* paying for inference —
   `output` is a bare list.
