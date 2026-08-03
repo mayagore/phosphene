@@ -103,6 +103,47 @@ running (the process is up and `spawn` returned its address). Either the empty
 result means something non-obvious or it is a bug; either way it is a poor
 signal when you are trying to confirm your own setup.
 
+## 4b. ✅ It works end to end — and the gate we feared is not a gate
+
+With the VM at 6 GiB, same code, nothing else changed:
+
+```
+podman build mcp                     →  exit 0, 117s
+```
+
+Then an agent declaring `plugins: [{mayagore, phosphene, v0.1.0}]`, asked for
+a brief:
+
+```
+objectiveai agents spawn --agent-file … --simple "Brief: a dating app where
+  pickles match on brine compatibility."       →  exit 0, 11s, 0 errors
+```
+
+The whole lane fired:
+
+1. the agent emitted **18 `tool_calls` deltas** for `phosphene_invent_directions`;
+2. the Rust tool ran **inside its container**;
+3. it spawned a **nested agent completion back through the host** via
+   `spawn::execute_streaming(&command_executor(), …)`;
+4. it returned structured JSON — 3 directions with names, descriptions,
+   5-slot palettes, typography and moods, plus the shared states
+   `["browse", "matches", "messages"]`;
+5. the outer agent reported them.
+
+**The reverse-attach gate never fired.** `objectiveai-api/src/agent/completions/client.rs:1044-1057`
+refuses an agent declaring `plugins` when there is no reverse-attached CLI, and
+that was the plan's one unsettled blocker. A CLI-spawned agent qualifies. What
+opens the gate is `laboratories spawn`, exactly as the scaffold README implies.
+
+**Still untested: the same call from a VIEWER TAB.** That is the remaining
+unknown, and it is the one that decides phosphene's shape.
+
+**Two wire facts confirmed empirically**, not just read from source: tool calls
+arrive as deltas on **assistant** messages under `tool_calls`, and the result
+arrives as a separate message with `role: "tool"` at its own `index` — here
+`index: 1`, sharing the assistant's index space. That is exactly the hazard the
+viewer's stream folding is written against.
+
 ## 5. What went right, and deserves saying
 
 - **`scaffold.sh` is unambiguous about what a plugin is.** One required
@@ -147,3 +188,5 @@ the host skips injecting the db proxy and publishing its conduit port.
 | `cargo build --release`, host | 94s |
 | Agent call → OOM failure reported | 229s |
 | VM memory change (stop / set / start) | ~30s |
+| `podman build mcp` at 6 GiB, warm caches | 117s |
+| Agent → tool → nested agent → structured result | 11s |
