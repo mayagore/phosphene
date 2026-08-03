@@ -32,6 +32,25 @@ export interface AgentRun {
    * outlast this.
    */
   stallSeconds?: number;
+  /**
+   * Plugins whose tools this agent may call. ONE plugin IS ONE MCP server, and
+   * the trio must match a registration BYTE FOR BYTE — `v0.1.0` and `0.1.0`
+   * are different keys and a mismatch is silent.
+   *
+   * Declaring any plugin requires a running laboratory host
+   * (`objectiveai laboratories spawn`), which is never auto-started.
+   */
+  plugins?: Array<{ owner: string; name: string; version: string }>;
+}
+
+/** One tool call the agent made, and its answer once it arrives. */
+export interface ToolEvent {
+  /** Prefixed by the plugin's name — e.g. `phosphene_invent_directions`. */
+  name: string;
+  /** Raw JSON arguments, streamed as a string and reassembled. */
+  arguments: string;
+  /** The tool's reply, once the run loop has dispatched it. */
+  result?: string;
 }
 
 export interface AgentProgress {
@@ -39,6 +58,11 @@ export interface AgentProgress {
   aih?: string;
   /** Characters of assistant output so far. */
   streamed: number;
+  /**
+   * What the agent is doing with its tools — the whole reason the viewer half
+   * exists. Ordered by the tool-call index the upstream assigned.
+   */
+  tools: ToolEvent[];
 }
 
 /** Cooperative cancellation. A plain object so a caller can flip it after the
@@ -70,7 +94,7 @@ export async function runAgent(
           model: run.model ?? DEFAULT_MODEL,
           temperature: run.temperature ?? 0.9,
           max_tokens: run.maxTokens ?? 2000,
-          plugins: [],
+          plugins: run.plugins ?? [],
           // `system_prompt` is {role, content}, NOT a bare string — a string
           // fails deserialization with the untagged-enum error that names the
           // whole agent union and points nowhere useful. Role is
@@ -84,7 +108,15 @@ export async function runAgent(
   };
 
   const parts = new Map<number, string>();
+  // Tool calls arrive as DELTAS on assistant messages, reassembled by their own
+  // `index` — a separate space from the message index. Confirmed on the wire.
+  const tools = new Map<number, ToolEvent>();
   let aih: string | undefined;
+  const snapshot = (): AgentProgress => ({
+    aih,
+    streamed: [...parts.values()].reduce((n, s) => n + s.length, 0),
+    tools: [...tools.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t),
+  });
 
   const stream = agentsSpawnExecuteStreaming(executor, request as never);
   // Driven by hand rather than `for await` so each `next()` can be raced
@@ -112,13 +144,21 @@ export async function runAgent(
       const item = next.value;
       if (typeof item === "string") {
         aih = item;
-        onProgress?.({ aih, streamed: 0 });
+        onProgress?.(snapshot());
         continue;
       }
       const chunk = item as {
         type?: string;
         message?: unknown;
-        messages?: Array<{ role?: string; index?: number; content?: unknown }>;
+        messages?: Array<{
+          role?: string;
+          index?: number;
+          content?: unknown;
+          tool_calls?: Array<{
+            index?: number;
+            function?: { name?: string; arguments?: string };
+          }>;
+        }>;
       };
       if (chunk?.type === "error") {
         throw new Error(
@@ -126,14 +166,33 @@ export async function runAgent(
         );
       }
       for (const m of chunk.messages ?? []) {
-        if (m.role !== "assistant" || typeof m.content !== "string") continue;
+        // A TOOL message is not a delta: it arrives whole, and it shares the
+        // assistant `index` space. Appending one to the assistant buffer would
+        // silently corrupt the output — hence an exact match on `role`, and
+        // never a default branch.
+        if (m.role === "tool") {
+          if (typeof m.content === "string") {
+            // Answers come back in call order, so fill the first unanswered.
+            const pending = [...tools.entries()]
+              .sort((a, b) => a[0] - b[0])
+              .find(([, t]) => t.result === undefined);
+            if (pending) pending[1].result = m.content;
+          }
+          continue;
+        }
+        if (m.role !== "assistant") continue;
+        for (const call of m.tool_calls ?? []) {
+          const i = call.index ?? 0;
+          const event = tools.get(i) ?? { name: "", arguments: "" };
+          if (call.function?.name) event.name += call.function.name;
+          if (call.function?.arguments) event.arguments += call.function.arguments;
+          tools.set(i, event);
+        }
+        if (typeof m.content !== "string") continue;
         const i = m.index ?? 0;
         parts.set(i, (parts.get(i) ?? "") + m.content);
       }
-      onProgress?.({
-        aih,
-        streamed: [...parts.values()].reduce((n, s) => n + s.length, 0),
-      });
+      onProgress?.(snapshot());
     }
   } finally {
     // Whether we stalled, threw, or were cancelled, tell the stream we are done
@@ -145,7 +204,9 @@ export async function runAgent(
     .sort((a, b) => a[0] - b[0])
     .map(([, s]) => s)
     .join("");
-  if (text.trim().length === 0 && !signal?.aborted) {
+  // An agent that only called tools and never spoke has still done work, so
+  // silence is only a failure when nothing happened at all.
+  if (text.trim().length === 0 && tools.size === 0 && !signal?.aborted) {
     // Distinguish "model said nothing" from "we cannot parse" — the legacy app
     // reported the former as a parser bug for weeks.
     throw new Error("the agent returned an empty response");

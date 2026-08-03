@@ -22,6 +22,8 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Client, functionsListExecute } from "@objectiveai/sdk";
 import { transport } from "./transport";
 import { inventDirections, type Direction, type Invention } from "./lib/directions";
+import { inventViaTools } from "./lib/orchestrator";
+import type { ToolEvent } from "./lib/agent";
 import {
   ARTBOARD_HEIGHT,
   ARTBOARD_WIDTH,
@@ -41,8 +43,15 @@ type Health =
 
 type Run =
   | { phase: "idle" }
-  | { phase: "inventing"; brief: string; aih?: string; streamed: number }
-  | { phase: "done"; brief: string; invention: Invention }
+  | {
+      phase: "inventing";
+      brief: string;
+      aih?: string;
+      streamed: number;
+      /** Populated only on the via-tools path. */
+      tools?: ToolEvent[];
+    }
+  | { phase: "done"; brief: string; invention: Invention; tools?: ToolEvent[] }
   | { phase: "failed"; brief: string; reason: string };
 
 interface Zoomed {
@@ -220,7 +229,14 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     return () => document.removeEventListener("keydown", onKey);
   }, [zoomed]);
 
-  const invent = useCallback(async () => {
+  /**
+   * `viaTools` is the architecture we are moving to: the tab spawns ONE agent
+   * that declares phosphene's plugin, and that agent calls phosphene's tools.
+   * The direct path stays alongside it until the tool path is proven over the
+   * viewer transport — they should produce the same shape of answer.
+   */
+  const invent = useCallback(
+    async (viaTools: boolean) => {
     const text = brief.trim();
     if (text.length === 0 || run.phase === "inventing" || rendering) return;
     abort.current = { aborted: false };
@@ -230,27 +246,41 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     // a different question sitting under new directions.
     setCells({});
     setBoardError(null);
+    const onProgress = (p: { aih?: string; streamed: number; tools?: ToolEvent[] }) =>
+      setRun((prev) =>
+        prev.phase === "inventing"
+          ? { ...prev, aih: p.aih, streamed: p.streamed, tools: p.tools }
+          : prev,
+      );
+
     try {
       const client = Client.viewer(await transport());
-      const invention = await inventDirections(
-        client,
-        text,
-        (p) =>
-          setRun((prev) =>
-            prev.phase === "inventing"
-              ? { ...prev, aih: p.aih, streamed: p.streamed }
-              : prev,
-          ),
-        signal,
-      );
-      if (!signal.aborted) setRun({ phase: "done", brief: text, invention });
+      if (viaTools) {
+        const result = await inventViaTools(client, text, onProgress, signal);
+        console.info(
+          `phosphene: via tools — ${result.tools.map((t) => t.name).join(", ")}`,
+        );
+        if (!signal.aborted) {
+          setRun({
+            phase: "done",
+            brief: text,
+            invention: result.invention,
+            tools: result.tools,
+          });
+        }
+      } else {
+        const invention = await inventDirections(client, text, onProgress, signal);
+        if (!signal.aborted) setRun({ phase: "done", brief: text, invention });
+      }
     } catch (error) {
       console.error("phosphene: invention failed", error);
       if (!signal.aborted) {
         setRun({ phase: "failed", brief: text, reason: String(error).slice(0, 300) });
       }
     }
-  }, [brief, run.phase, rendering]);
+    },
+    [brief, run.phase, rendering],
+  );
 
   const render = useCallback(async () => {
     if (run.phase !== "done" || rendering) return;
@@ -311,19 +341,32 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           placeholder="A dating app where pickles match on brine compatibility"
           onChange={(e) => setBrief(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void invent();
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void invent(false);
           }}
         />
         <div className="ph-composer-row">
           <button
             type="button"
             className="ph-button"
-            onClick={() => void invent()}
+            onClick={() => void invent(false)}
             disabled={
               busy || rendering || brief.trim().length === 0 || health.state !== "ready"
             }
           >
             {busy ? "inventing…" : "invent directions"}
+          </button>
+          {/* The same result, reached the way the platform intends: an agent
+              calling phosphene's tools, with this tab as the display. */}
+          <button
+            type="button"
+            className="ph-button ph-button--ghost"
+            onClick={() => void invent(true)}
+            disabled={
+              busy || rendering || brief.trim().length === 0 || health.state !== "ready"
+            }
+            title="Spawn an agent that declares phosphene's plugin and calls its tools"
+          >
+            via tools
           </button>
           <span className="ph-hint">⌘↵</span>
         </div>
@@ -339,6 +382,29 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           {run.aih && <code className="ph-aih">{run.aih.split("/").pop()}</code>}
         </section>
       )}
+
+      {/* What the agent is doing with its tools. This is the display half of
+          the architecture — the tab's actual job once the work moves behind
+          tools, and the only place a human can see it happening. */}
+      {(run.phase === "inventing" || run.phase === "done") &&
+        (run.tools?.length ?? 0) > 0 && (
+          <section className="ph-tools" aria-live="polite">
+            {run.tools?.map((tool, i) => (
+              <div className="ph-tool" key={`${tool.name}-${i}`}>
+                <span
+                  className={`phosphene-dot phosphene-dot--${tool.result ? "ready" : "connecting"}`}
+                  aria-hidden="true"
+                />
+                <code className="ph-tool-name">{tool.name || "…"}</code>
+                <span className="ph-tool-state">
+                  {tool.result
+                    ? `${(tool.result.length / 1024).toFixed(1)} KB back`
+                    : "calling…"}
+                </span>
+              </div>
+            ))}
+          </section>
+        )}
 
       {run.phase === "failed" && (
         <section className="ph-error" role="alert">
