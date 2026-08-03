@@ -1,853 +1,684 @@
-//! An ObjectiveAI MCP plugin, in as few moving parts as one can have.
+//! Phosphene's tools — the MCP half.
 //!
-//! Everything specific to running inside ObjectiveAI — the transport,
-//! the port binding, the `initialize` reply, the command extension —
-//! is [`objectiveai_mcp_plugin_framework`]'s job. What is left here is
-//! the part that is actually yours: the tools, and what they do.
+//! A plugin IS a set of tools. This is that set. Everything specific to
+//! running inside ObjectiveAI — the transport, the port binding, the
+//! `initialize` reply, the command extension — is
+//! [`objectiveai_mcp_plugin_framework`]'s job.
 //!
-//! `rename.sh` handles `NAME`, the package and the binary. What is
-//! left for you is `PORT` — which must match `mcp.port` in
-//! `objectiveai.json`, since the host publishes the port the manifest
-//! names — and the tools.
+//! **The viewer half never calls these.** An agent does, and the tab renders
+//! what the agent is doing. That is the whole architecture: the work lives
+//! behind tools, the daemon runs it, the human watches.
+//!
+//! Each tool does its work by spawning an agent completion back through the
+//! host. A plugin has no network of its own and no business holding a key.
+//!
+//! The prompts, the JSON salvage, the anchor contract and the model choices
+//! are ported from the TypeScript that proved them against a live daemon
+//! (9/9 artboards, 0 failures, 74.5s). Where a line here looks arbitrary, the
+//! reason is in the comment beside it.
 
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
-// Brings `rmcp` into scope under the name the `#[tool_router]` and
-// `#[tool]` macros expand to. Depending on `rmcp` separately would
-// risk two versions in one binary, where a `ToolRouter` built by the
-// macros would not fit `serve`.
+// Brings `rmcp` into scope under the name the `#[tool_router]` and `#[tool]`
+// macros expand to. Depending on `rmcp` separately would risk two versions in
+// one binary, where a `ToolRouter` built by the macros would not fit `serve`.
 use objectiveai_mcp_plugin_framework::rmcp;
-// Likewise the SDK, whose `CommandExecutor` trait every `execute` is
-// generic over: a separately-resolved copy would be a different trait.
+// Likewise the SDK, whose `CommandExecutor` trait every `execute` is generic
+// over: a separately-resolved copy would be a different trait.
 use objectiveai_mcp_plugin_framework::objectiveai_sdk;
+
 use futures::StreamExt;
 use objectiveai_mcp_plugin_framework::tools::Tools;
-use objectiveai_mcp_plugin_framework::{db, sqlx};
 use objectiveai_sdk::cli::command::RequestBase;
-use objectiveai_sdk::cli::command::agents::instances::get;
-use objectiveai_sdk::cli::command::channels;
-use rmcp::handler::server::tool::ToolRoute;
+use objectiveai_sdk::cli::command::agents::message::RequestMessage;
+use objectiveai_sdk::cli::command::agents::selector::{AgentRef, AgentSelector};
+use objectiveai_sdk::cli::command::agents::spawn;
 use rmcp::handler::server::wrapper::{Json, Parameters};
-use sqlx::Row as _;
+use serde::{Deserialize, Serialize};
 
 /// Must match `mcp.port` in `objectiveai.json`.
 const PORT: u16 = 8080;
-/// The routing prefix ObjectiveAI derives — see the module docs.
+/// The routing prefix ObjectiveAI derives — tools reach an agent as
+/// `phosphene_invent_directions` and `phosphene_render_state`.
 const NAME: &str = "phosphene";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// The argument that gates the pair below. Declared by the AGENT, in
-/// its plugin entry — not by this process, and not changeable while it
-/// runs.
-///
-/// Read strictly as a boolean: JSON `true` and nothing else. Absent,
-/// `null`, `0`, `"true"` — all off. Argument values are free-form JSON
-/// that some human typed into an agent definition, so the only safe
-/// reading of "is this feature on" is the exact one.
-const SWITCH_ARGUMENT: &str = "switch";
+/// Artboards are a fixed portrait viewport so columns compare like with like.
+const ARTBOARD_WIDTH: u32 = 400;
+const ARTBOARD_HEIGHT: u32 = 720;
 
-const SWITCH_TOOL: &str = "scaffold_switch_deleteme";
-const SWITCHED_TOOL: &str = "scaffold_switched_deleteme";
+/// Invention is a paragraph of JSON, so it stays cheap.
+const INVENTION_MODEL: &str = "openai/gpt-4o-mini";
 
-/// Created on first use rather than by a migration, because a plugin
-/// container is ephemeral and there is nowhere to run one.
+/// Generation is the step the whole product is judged on, so it does not.
 ///
-/// The database is the DAEMON's, tunnelled in — not a private one — so
-/// a plugin shares it with ObjectiveAI's own tables and with every
-/// other plugin. Two habits follow, and both are in this statement: own
-/// a distinctly named table rather than writing into someone else's,
-/// and scope rows by the agent they belong to, since the next container
-/// over is a different agent looking at the same rows.
-const CREATE_NOTES: &str = "
-    CREATE TABLE IF NOT EXISTS scaffold_notes_deleteme (
-        agent_instance_hierarchy TEXT        NOT NULL,
-        note_key                 TEXT        NOT NULL,
-        note_value               TEXT        NOT NULL,
-        written_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-        PRIMARY KEY (agent_instance_hierarchy, note_key)
+/// Measured on this exact prompt, one direction, one state: `gpt-4o-mini`
+/// returned 1.6 KB — valid, correctly sized, palette used properly, and a
+/// placeholder: one centred card, one heading, one button. Adding an explicit
+/// density clause to the prompt moved it to 1.57 KB, i.e. not at all.
+/// `claude-sonnet-4.5` on the same prompt returned 5.3 KB with real furniture.
+const GENERATION_MODEL: &str = "anthropic/claude-sonnet-4.5";
+
+/// Hang detection belongs on the GAP BETWEEN CHUNKS, not on total duration.
+/// The legacy app spent seven commits learning this: a healthy generation
+/// legitimately runs for many minutes, while a wedged one goes silent at once.
+const STALL: Duration = Duration::from_secs(120);
+/// Labelled backstops. Every outer layer strictly outlasts every inner one.
+const INVENT_TIMEOUT: Duration = Duration::from_secs(180);
+const RENDER_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// An anchor rides in as INPUT on every sibling state, so it is paid for once
+/// per sibling. Generous, but bounded.
+const MAX_ANCHOR_CHARS: usize = 24_000;
+
+// ── Prompts ─────────────────────────────────────────────────────────────
+//
+// Carried from the legacy app, the one part of it worth keeping. The
+// hard-won details: "genuinely different… not variations on one theme" is
+// what stops three near-identical directions; the palette contract shouts
+// "JSON ARRAY … Never an object" because a live model returned an object
+// keyed by slot and crashed the old app; and `states` are chosen per brief
+// and SHARED across directions, which is what makes a comparison grid
+// meaningful instead of a mosaic.
+
+const INVENT_PROMPT: &str = r##"You are a senior design director exploring visual directions for a design brief. Generate exactly 3 directions that are genuinely different from each other — not variations on one theme, but contrasting approaches in mood, visual weight, cultural reference, or era.
+
+Consider the domain implied by the intent. A fintech product demands different visual language than a music festival poster or a children's app.
+
+For each direction provide:
+- name: Two-word evocative name (e.g. "Midnight Trust", "Paper Carnival")
+- description: 2-3 sentences on visual strategy and emotional target. What does the viewer feel? What design tradition does this reference?
+- palette: a JSON ARRAY of exactly 5 hex color strings in this order: background, surface, accent, text, muted — e.g. ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"]. Never an object. Background and text MUST have sufficient contrast for readability. Accent should be distinct from background.
+- typography: A system font stack for headings and body (e.g. "Georgia, serif / system-ui, sans-serif"). No Google Fonts or custom fonts — only fonts available without loading external resources.
+- mood: 2-3 word mood descriptor
+
+Also provide "states": a JSON array of exactly 3 state names (views/screens/compositions) that make sense for this brief — a fintech app might get ["landing", "portfolio", "transactions"]; a concert poster might get ["announce", "lineup", "tickets"]. These are SHARED across all directions: every direction will render exactly these 3 states so they can be compared side by side. Do not default to "hero/dashboard/settings" unless those genuinely fit.
+
+Respond with a JSON object: {"directions": [...], "states": ["...", "...", "..."]}."##;
+
+/// The `xmlns` clause costs the model nothing and is what makes the
+/// SVG-`foreignObject` → canvas rasterization path work — verified available
+/// in-page and untainted, and the thing that keeps vision-based judging on
+/// the table. "No external resources" serves the same end: that technique is
+/// exactly where remote fonts and images fall down.
+fn requirements() -> String {
+    format!(
+        r##"Technical requirements:
+- Complete HTML document with xmlns="http://www.w3.org/1999/xhtml" on the <html> tag
+- Set html and body to width: {ARTBOARD_WIDTH}px; height: {ARTBOARD_HEIGHT}px; margin: 0; overflow: hidden
+- All styles in a <style> tag — no inline styles except where unavoidable
+- CSS flexbox and grid are both allowed. No media queries, no animations, no JavaScript
+- No external resources (no Google Fonts, no images, no CDN links)
+- Valid XHTML: self-closing tags (<meta/>, <br/>), quoted attributes, no bare ampersands
+- Use the font stacks from the typography field (they are system fonts)
+
+Design quality:
+- Use the palette semantically: bg= for page background, surface= for cards/panels, accent= for buttons and interactive highlights, text= for body copy, muted= for secondary text and borders
+- Visual density, whitespace, and copy tone should reflect the mood
+- Use realistic placeholder content — real-looking names, dollar amounts, dates, titles — not "Lorem ipsum" or "John Doe"
+- Typography hierarchy: clear distinction between headings, subheadings, body, and labels
+- Composition: consider visual weight distribution, focal points, and reading flow
+
+Completeness — this is a finished screen, not a wireframe:
+- Fill the full {ARTBOARD_WIDTH}×{ARTBOARD_HEIGHT} frame. Deliberate empty space is fine; an unfinished screen is not
+- Include the furniture a real screen of this kind has: header or nav, the primary content at real density (a list has several rows, a feed has several cards, a form has all its fields), and the supporting detail around it — labels, metadata, secondary actions, status
+- Design the details rather than defaulting: borders, corner radii, dividers, iconography drawn in CSS, considered type sizes
+- A single centered card with one heading and one button is a placeholder. Do better than that."##
     )
-";
+}
 
-/// Runs [`CREATE_NOTES`] once per process, however many tools race to
-/// use it — the same shape [`db::connect`] uses, and for the same
-/// reason: the work is idempotent but the round trip is not free.
-static NOTES_TABLE: tokio::sync::OnceCell<()> = tokio::sync::OnceCell::const_new();
+fn render_system_prompt(states: &[String], label: &str, anchor_html: Option<&str>) -> String {
+    // Colour and type are already pinned by the palette and typography spec,
+    // so what actually drifts across independently-generated screens is the
+    // SHARED CHROME — nav, spacing scale, component styling. Pinning the
+    // anchor's real markup rather than a description of it is what makes the
+    // states read as one product.
+    let consistency = match anchor_html {
+        Some(html) => {
+            let truncated: String = html.chars().take(MAX_ANCHOR_CHARS).collect();
+            let anchor_label = states.first().map(String::as_str).unwrap_or(label);
+            format!(
+                "The \"{anchor_label}\" state of this direction is already rendered — \
+                 match its visual language exactly: reuse the same header/nav markup, \
+                 the same spacing scale and CSS, and the same component styling and \
+                 palette usage. Only the content differs for this state. Here is that \
+                 state's HTML to match:\n\n{truncated}"
+            )
+        }
+        None => "Keep this direction's visual language consistent across the set (same \
+                 header/nav treatment, spacing scale, and component styling) so the \
+                 states read as one product."
+            .to_string(),
+    };
 
-/// Where a credential obtained through a viewer channel is kept, so it
-/// is asked for once rather than once per call.
-const CREATE_CREDENTIALS: &str = "
-    CREATE TABLE IF NOT EXISTS scaffold_credentials_deleteme (
-        agent_instance_hierarchy TEXT        NOT NULL PRIMARY KEY,
-        credential               TEXT        NOT NULL,
-        obtained_at              TIMESTAMPTZ NOT NULL DEFAULT now()
+    let labels = states
+        .iter()
+        .map(|state| format!("\"{state}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let count = states.len();
+    let requirements = requirements();
+
+    format!(
+        "You are a visual designer rendering design concepts as self-contained HTML \
+         documents.\n\nThis exploration renders {count} states \
+         (views/screens/compositions) per direction, using these EXACT labels shared \
+         across every direction so results compare side by side: {labels}. Generate \
+         ONLY the \"{label}\" state now — the other states are generated separately. \
+         {consistency}\n\nKeep planning brief — put the design effort into the HTML \
+         itself, not extended deliberation.\n\n{requirements}\n\nRespond with a JSON \
+         object: {{\"label\": \"{label}\", \"html\": \"...\"}}."
     )
-";
-
-static CREDENTIALS_TABLE: tokio::sync::OnceCell<()> =
-    tokio::sync::OnceCell::const_new();
-
-/// The channel's discriminator. A user surface decides from this
-/// whether an offer is one it knows how to answer, so it wants to name
-/// the EXCHANGE, not the plugin.
-const CREDENTIAL_CHANNEL_KEY: &str = "scaffold.credential";
-
-/// How long to wait for a viewer to accept the offer. `channels
-/// publish` blocks until one does, and is UNCAPPED without this — a
-/// plugin that omits it waits for a human forever.
-const ACCEPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// How long to wait, after acceptance, for the reply carrying the
-/// credential. Separate from [`ACCEPT_TIMEOUT`] because they are
-/// different waits: one is "is anyone there", the other is "has the
-/// person finished typing".
-///
-/// Enforced by the daemon, not here: `timeout_seconds` becomes a
-/// whole-stream deadline over every command, anchored at first poll,
-/// which yields a `Timeout` error item and ends the stream.
-const REPLY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
-
-/// Which tools to actually serve.
-///
-/// `Plugin::tool_router()` declares every tool this plugin could ever
-/// have; this decides which of them exist right now. Two independent
-/// gates, and they are different in kind:
-///
-/// - the ARGUMENT gate is fixed for the process's life, because the
-///   host stamps the arguments at container create and nothing
-///   rewrites them. A plugin the agent did not ask to have a switch
-///   never serves one, and no call can change that.
-/// - the SWITCH gate moves at runtime, which is the whole point of
-///   [`Tools::replace`].
-///
-/// Filtering a full router by name, rather than assembling routes by
-/// hand, means the macros stay the single declaration of what a tool
-/// IS — this only decides whether it is currently served.
-fn served_routes(switched_on: bool) -> Vec<ToolRoute<Plugin>> {
-    // `as_bool` is `Some` only for a JSON boolean, so every other
-    // shape — missing, `null`, a number, the STRING "true" — falls
-    // through to off. Deliberately not lenient: a plugin that guesses
-    // what someone meant by `"true"` is a plugin that will one day
-    // guess wrong about a feature that should have stayed off.
-    let has_switch = objectiveai_mcp_plugin_framework::arguments()
-        .get(SWITCH_ARGUMENT)
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-
-    Plugin::tool_router()
-        .into_iter()
-        .filter(|route| {
-            let name = route.attr.name.as_ref();
-            if name == SWITCH_TOOL {
-                has_switch
-            } else if name == SWITCHED_TOOL {
-                has_switch && switched_on
-            } else {
-                true
-            }
-        })
-        .collect()
 }
 
-/// The pool, with `ddl` guaranteed to have run once.
-///
-/// Note the queries are `sqlx::query`, not the `sqlx::query!` MACRO.
-/// The macro checks SQL against a live database AT COMPILE TIME, which
-/// would make this plugin unbuildable without one — and the database a
-/// plugin talks to does not exist until a host creates its container.
-async fn table_pool(
-    table: &'static tokio::sync::OnceCell<()>,
-    ddl: &'static str,
-) -> Result<db::Pool, String> {
-    let pool = db::connect(Default::default())
-        .await
-        .map_err(|error| error_chain("connect to the database", &*error))?;
+// ── Types ───────────────────────────────────────────────────────────────
 
-    table
-        .get_or_try_init(|| async { sqlx::query(ddl).execute(&pool).await.map(|_| ()) })
-        .await
-        .map_err(|error| error_chain("create the table", &error))?;
-
-    Ok(pool)
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Direction {
+    /// Two-word evocative name.
+    pub name: String,
+    /// 2-3 sentences on visual strategy and emotional target.
+    pub description: String,
+    /// Exactly 5 hex strings, in slot order: bg, surface, accent, text, muted.
+    pub palette: Vec<String>,
+    /// A system font stack — headings / body.
+    pub typography: String,
+    /// 2-3 word mood descriptor.
+    pub mood: String,
 }
 
-/// `source` chains are where the actual cause lives — sqlx's top-level
-/// `Display` is often just "error returned from database server", and
-/// the SDK's executor errors are the same shape. Whoever reads this
-/// gets one string, so it has to be the whole story.
-fn error_chain(doing: &str, error: &dyn std::error::Error) -> String {
-    let mut message = format!("{doing}: {error}");
-    let mut source = error.source();
-    while let Some(cause) = source {
-        message.push_str(&format!(": {cause}"));
-        source = cause.source();
-    }
-    message
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Invention {
+    pub directions: Vec<Direction>,
+    /// Shared across every direction so columns compare like with like.
+    pub states: Vec<String>,
 }
 
-/// The same, as the protocol-level error the note tools return.
-async fn notes_pool() -> Result<db::Pool, rmcp::ErrorData> {
-    table_pool(&NOTES_TABLE, CREATE_NOTES)
-        .await
-        .map_err(|message| rmcp::ErrorData::internal_error(message, None))
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct InventArgs {
+    /// The design brief, in the designer's own words — e.g. "a dating app
+    /// where pickles match on brine compatibility".
+    pub brief: String,
 }
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RenderArgs {
+    /// The direction to render, exactly as `invent_directions` returned it.
+    pub direction: Direction,
+    /// Every shared state in the exploration, in order. The first is the
+    /// anchor.
+    pub states: Vec<String>,
+    /// Which of `states` to render now.
+    pub label: String,
+    /// The anchor state's rendered HTML, when this is not the anchor itself.
+    /// Supplying it is what keeps a direction's states looking like one
+    /// product; omitting it costs coherence, not correctness.
+    #[serde(default)]
+    pub anchor_html: Option<String>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct Rendered {
+    pub label: String,
+    /// A complete, self-contained XHTML document, 400×720.
+    pub html: String,
+}
+
+// ── Running an agent ────────────────────────────────────────────────────
 
 /// A [`RequestBase`] carrying nothing but a wall-clock cap.
-fn capped(timeout: std::time::Duration) -> RequestBase {
+fn capped(timeout: Duration) -> RequestBase {
     RequestBase {
-        // Whole seconds, and never zero — zero is rejected at parse
-        // time, and rounding a sub-second remainder down to it would
-        // turn "almost out of time" into "invalid request".
+        // Whole seconds, and never zero — zero is rejected at parse time.
         timeout_seconds: Some(timeout.as_secs().max(1)),
         ..Default::default()
     }
 }
 
-/// Ask a user surface for a credential, over one channel, and close it.
-///
-/// The shape of the exchange, which is not obvious from the commands:
-///
-/// 1. `channels publish` offers the channel and BLOCKS until a
-///    `/channels` client accepts, returning the id and `S_pub`.
-/// 2. `channels logs subscribe` waits for the owner's reply. One call
-///    suffices: a publisher's reads are scoped to `reply` entries, so
-///    the offer never comes back as its own answer.
-/// 3. Entries are ENVELOPES. The content lives behind `channels logs
-///    open`, which is why finding the reply and reading it are two
-///    round trips.
-/// 4. The channel is closed either way. A channel left open is a user
-///    surface left waiting on a plugin that has stopped caring.
-///
-/// Both waits are bounded by the base `timeout_seconds`, which the
-/// daemon enforces for every command — no clock is kept here.
-async fn request_credential(url: &str) -> Result<String, CredentialFailure> {
-    let executor = objectiveai_mcp_plugin_framework::command_executor();
-
-    let offer = channels::publish::execute(
-        &executor,
-        channels::publish::Request {
-            path_type: channels::publish::Path::ChannelsPublish,
-            key: CREDENTIAL_CHANNEL_KEY.to_string(),
-            // Opaque to the daemon — this is for whoever accepts, and
-            // naming the endpoint is the whole basis on which a person
-            // decides whether to hand over a credential.
-            details: serde_json::json!({ "url": url }),
-            message: format!("A plugin is asking for a credential for {url}."),
-            base: capped(ACCEPT_TIMEOUT),
-        },
-        None,
-    )
-    .await
-    .map_err(|error| failed("publish", error_chain("publish the channel", &error)))?;
-
-    let credential = collect_credential(&executor, &offer).await;
-
-    // Close on both paths. `S_pub` authorizes it, and a failure to
-    // close is not worth overwriting the real outcome with.
-    let _ = channels::close::execute(
-        &executor,
-        channels::close::Request {
-            path_type: channels::close::Path::ChannelsClose,
-            channel_id: offer.channel_id.clone(),
-            secret: offer.secret.clone(),
-            base: Default::default(),
-        },
-        None,
-    )
-    .await;
-
-    credential
+fn internal(message: impl Into<String>) -> rmcp::ErrorData {
+    rmcp::ErrorData::internal_error(message.into(), None)
 }
 
-/// Wait for the owner's reply on an accepted channel and read the
-/// credential out of it.
-async fn collect_credential(
-    executor: &objectiveai_mcp_plugin_framework::command_executor::Executor,
-    offer: &channels::publish::Response,
-) -> Result<String, CredentialFailure> {
-    // ONE subscribe is enough, for a reason worth knowing: the daemon
-    // scopes each role to a direction, and a PUBLISHER reads only
-    // `reply` entries. The offer this plugin just published is an
-    // owner-side entry, so it is never handed back as if it were the
-    // answer — there is nothing to skip past and no cursor to carry.
-    //
-    // The timeout is the base cap, which the daemon applies to every
-    // command as a whole-stream deadline anchored at first poll. It
-    // arrives as a `Timeout` error item, so the `Err` arm below reports
-    // it; nothing here needs its own clock.
-    let entries = channels::logs::subscribe::execute(
-        executor,
-        channels::logs::subscribe::Request {
-            path_type: channels::logs::subscribe::Path::ChannelsLogsSubscribe,
-            channel_id: offer.channel_id.clone(),
-            secret: offer.secret.clone(),
-            after_id: None,
-            limit: None,
-            base: capped(REPLY_TIMEOUT),
+/// Spawn one agent completion through the host and return everything it said.
+///
+/// The identity argument is `None` on purpose: the HOST decides who a plugin
+/// is — it stamps the trio from the image coordinates and refuses any claim
+/// off the wire — so a plugin passing its own would be asserting nothing.
+async fn run_agent(
+    system: &str,
+    user: &str,
+    model: &str,
+    temperature: f64,
+    max_tokens: u32,
+    timeout: Duration,
+) -> Result<String, rmcp::ErrorData> {
+    // Built as JSON rather than by hand. The resolved-agent type is a deep
+    // untagged enum whose mis-construction fails with an error naming the
+    // whole union and pointing nowhere useful — and THIS JSON is the exact
+    // shape already proven against a live daemon. Note `system_prompt` is
+    // {role, content}; a bare string does not deserialize.
+    let spec = serde_json::json!({
+        "upstream": "openrouter",
+        "model": model,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "plugins": [],
+        "system_prompt": { "role": "system", "content": system },
+    });
+    let spec = serde_json::from_value(spec)
+        .map_err(|error| internal(format!("agent spec did not deserialize: {error}")))?;
+
+    let request = spawn::Request {
+        path_type: spawn::Path::AgentsSpawn,
+        message: RequestMessage::Simple(user.to_string()),
+        agent: AgentSelector::Ref {
+            agent: AgentRef::Resolved(spec),
         },
+        // `execute_streaming` sets `stream` for us.
+        dangerous_advanced: None,
+        base: capped(timeout),
+    };
+
+    let stream = spawn::execute_streaming(
+        &objectiveai_mcp_plugin_framework::command_executor(),
+        request,
         None,
     )
     .await
-    .map_err(|error| failed("subscribe", error_chain("subscribe", &error)))?;
+    .map_err(|error| internal(format!("agents spawn: {error}")))?;
+    let mut stream = std::pin::pin!(stream);
 
-    let mut entries = std::pin::pin!(entries);
-    let reply_id = loop {
-        match entries.next().await {
-            Some(Ok(channels::logs::subscribe::ResponseItem::Item(
-                channels::logs::list::ChannelLogEntry::Reply { details_id, .. },
-            ))) => break details_id,
-            // Unreachable while a publisher reads only replies. Skipped
-            // rather than rejected so that widening the role's
-            // directions could never turn this into a hard failure.
-            Some(Ok(channels::logs::subscribe::ResponseItem::Item(_))) => continue,
-            Some(Ok(channels::logs::subscribe::ResponseItem::ChannelClosed(_))) => {
-                return Err(failed(
-                    "subscribe",
-                    "the channel closed before a reply arrived",
-                ));
+    // Assistant `content` arrives as DELTAS, accumulated by `index`.
+    let mut parts: BTreeMap<u64, String> = BTreeMap::new();
+
+    loop {
+        let next = tokio::time::timeout(STALL, stream.next())
+            .await
+            .map_err(|_| internal(format!("the agent went silent for {}s", STALL.as_secs())))?;
+        let Some(item) = next else { break };
+        let item = item.map_err(|error| internal(format!("agents spawn: {error}")))?;
+
+        // The first item is a bare id string; the rest are completion chunks.
+        let spawn::ResponseItem::Chunk(chunk) = item else {
+            continue;
+        };
+
+        // Walked as JSON deliberately. The wire shape is the contract we
+        // verified live; the Rust struct is one implementation of it, and the
+        // message chunk is an untagged enum whose tool variant shares this
+        // index space. Reading `role` off the value is both the safest
+        // discrimination and the one that cannot drift.
+        let value = serde_json::to_value(&chunk)
+            .map_err(|error| internal(format!("chunk did not serialize: {error}")))?;
+        let Some(messages) = value.get("messages").and_then(|m| m.as_array()) else {
+            continue;
+        };
+        for message in messages {
+            // Tool chunks are NOT deltas — they arrive whole and share this
+            // index space. Folding one into the assistant buffer corrupts the
+            // output, so match `role` exactly.
+            if message.get("role").and_then(|role| role.as_str()) != Some("assistant") {
+                continue;
             }
-            Some(Err(error)) => {
-                return Err(failed("subscribe", error_chain("subscribe", &error)));
+            let Some(content) = message.get("content").and_then(|c| c.as_str()) else {
+                continue;
+            };
+            let index = message.get("index").and_then(|i| i.as_u64()).unwrap_or(0);
+            parts.entry(index).or_default().push_str(content);
+        }
+    }
+
+    let text: String = parts.into_values().collect();
+    if text.trim().is_empty() {
+        // Distinguish "the model said nothing" from "we cannot parse" — the
+        // legacy app reported the former as a parser bug for weeks.
+        return Err(internal("the agent returned an empty response"));
+    }
+    Ok(text)
+}
+
+// ── Recovering structure from prose ─────────────────────────────────────
+
+/// Remove ``` fences without disturbing anything else.
+fn strip_fences(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("```") {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 3..];
+        // An opening fence may carry a language tag on the same line.
+        let body = match after.find('\n') {
+            Some(newline) if after[..newline].trim().chars().all(char::is_alphanumeric) => {
+                &after[newline + 1..]
+            }
+            _ => after,
+        };
+        match body.find("```") {
+            Some(close) => {
+                out.push_str(&body[..close]);
+                rest = &body[close + 3..];
             }
             None => {
-                return Err(failed(
-                    "subscribe",
-                    "the subscription ended before a reply arrived",
-                ));
+                out.push_str(body);
+                rest = "";
+                break;
             }
         }
-    };
+    }
+    out.push_str(rest);
+    out
+}
 
-    let opened = channels::logs::open::execute(
-        executor,
-        channels::logs::open::Request {
-            path_type: channels::logs::open::Path::ChannelsLogsOpen,
-            channel_id: offer.channel_id.clone(),
-            secret: offer.secret.clone(),
-            entry_id: reply_id,
-            base: Default::default(),
-        },
-        None,
-    )
-    .await
-    .map_err(|error| failed("open", error_chain("open the reply", &error)))?;
+/// Recover a JSON value from a model's prose.
+///
+/// Agent completions cannot constrain output shape — `output_mode` is
+/// documented "Vector completions only. Ignored for agent completions" — so
+/// the contract is prose, and this is the cost of that. Two layers: strip
+/// fences and parse, then scan for a balanced object. Measured: Sonnet
+/// returns fenced JSON, gpt-4o-mini returns it bare.
+fn parse_json_loose(text: &str) -> Result<serde_json::Value, String> {
+    let stripped = strip_fences(text);
+    let trimmed = stripped.trim();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return Ok(value);
+    }
 
-    let content = match opened {
-        channels::logs::open::Response::Entry { content, .. } => content,
-        channels::logs::open::Response::NotFound => {
-            return Err(failed("open", "the reply entry was gone"));
+    let chars: Vec<char> = trimmed.chars().collect();
+    let start = chars
+        .iter()
+        .position(|c| *c == '{' || *c == '[')
+        .ok_or_else(|| "no JSON found in the model's response".to_string())?;
+    let open = chars[start];
+    let close = if open == '{' { '}' } else { ']' };
+
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in chars[start..].iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
         }
-    };
-
-    content
-        .get("credential")
-        .and_then(|value| value.as_str())
-        .filter(|credential| !credential.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            failed(
-                "credential",
-                "the reply carried no non-empty string `credential` field",
-            )
-        })
+        if *ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if *ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        if *ch == open {
+            depth += 1;
+        } else if *ch == close {
+            depth -= 1;
+            if depth == 0 {
+                let slice: String = chars[start..=start + offset].iter().collect();
+                return serde_json::from_str(&slice)
+                    .map_err(|error| format!("recovered JSON did not parse: {error}"));
+            }
+        }
+    }
+    Err("unterminated JSON in the model's response".to_string())
 }
 
-/// Look up, or obtain and store, then call.
-async fn credential_call(url: &str) -> Result<CredentialCall, CredentialFailure> {
-    // A failed lookup is FATAL, and deliberately so. "The read
-    // errored" and "there is no stored credential" are the same
-    // silence from here, and guessing the second would bother a human
-    // for a credential that already exists — then overwrite the good
-    // one with whatever came back. Refusing costs a retry; guessing
-    // costs the stored credential.
-    let pool = table_pool(&CREDENTIALS_TABLE, CREATE_CREDENTIALS)
-        .await
-        .map_err(|message| failed("database", message))?;
+/// Pull the document out of a generation response.
+///
+/// Layer 1 is the contract, `{"label", "html"}`, plus the legacy wrapper
+/// `{"states":[…]}` a model occasionally answers with anyway. Layer 2 is the
+/// far more common miss — the model ignores the JSON envelope and simply
+/// writes the document. Taking it is strictly better than failing the cell.
+fn extract_html(text: &str, label: &str) -> Result<String, String> {
+    if let Ok(value) = parse_json_loose(text) {
+        if let Some(html) = value.get("html").and_then(|h| h.as_str()) {
+            if !html.trim().is_empty() {
+                return Ok(html.to_string());
+            }
+        }
+        if let Some(states) = value.get("states").and_then(|s| s.as_array()) {
+            let chosen = states
+                .iter()
+                .find(|state| state.get("label").and_then(|l| l.as_str()) == Some(label))
+                .or_else(|| states.first());
+            if let Some(html) = chosen.and_then(|s| s.get("html")).and_then(|h| h.as_str()) {
+                if !html.trim().is_empty() {
+                    return Ok(html.to_string());
+                }
+            }
+        }
+    }
 
-    let stored: Option<String> = sqlx::query(
-        "SELECT credential FROM scaffold_credentials_deleteme
-         WHERE agent_instance_hierarchy = $1",
-    )
-    .bind(notes_scope())
-    .fetch_optional(&pool)
-    .await
-    .map_err(|error| failed("database", error_chain("read the credential", &error)))?
-    .map(|row| row.get("credential"));
-
-    let (credential, credential_source) = match stored {
-        Some(credential) => (credential, "database"),
-        None => return credential_from_channel(url, pool).await,
-    };
-
-    let response = reqwest::Client::new()
-        .get(url)
-        .header(reqwest::header::AUTHORIZATION, &credential)
-        .send()
-        .await
-        .map_err(|error| failed("request", error_chain("call the endpoint", &error)))?;
-
-    // The STATUS is reported, not enforced. A 401 is a real answer to
-    // "call this with my credential", and turning it into an error
-    // would hide the one result that says the credential is stale.
-    let status = response.status().as_u16();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| failed("request", error_chain("read the response", &error)))?;
-
-    Ok(CredentialCall {
-        credential_source: credential_source.to_string(),
-        status,
-        body,
-    })
-}
-
-/// Ask a human for the credential through the viewer channel, store
-/// it, and make the call. Reached only when the lookup SUCCEEDED and
-/// found nothing — see `credential_call`.
-async fn credential_from_channel(
-    url: &str,
-    pool: db::Pool,
-) -> Result<CredentialCall, CredentialFailure> {
-    let credential = request_credential(url).await?;
-
-    // Stored only once it is in hand. Writing before the exchange
-    // completed would leave a half-credential behind for the next
-    // call to trust.
-    sqlx::query(
-        "INSERT INTO scaffold_credentials_deleteme
-             (agent_instance_hierarchy, credential)
-         VALUES ($1, $2)
-         ON CONFLICT (agent_instance_hierarchy) DO UPDATE
-             SET credential = EXCLUDED.credential, obtained_at = now()",
-    )
-    .bind(notes_scope())
-    .bind(&credential)
-    .execute(&pool)
-    .await
-    .map_err(|error| failed("store", error_chain("store the credential", &error)))?;
-
-    let response = reqwest::Client::new()
-        .get(url)
-        .header(reqwest::header::AUTHORIZATION, &credential)
-        .send()
-        .await
-        .map_err(|error| failed("request", error_chain("call the endpoint", &error)))?;
-
-    // The STATUS is reported, not enforced — see `credential_call`.
-    let status = response.status().as_u16();
-    let body = response
-        .text()
-        .await
-        .map_err(|error| failed("request", error_chain("read the response", &error)))?;
-
-    Ok(CredentialCall {
-        credential_source: "channel".to_string(),
-        status,
-        body,
-    })
-}
-
-/// Which agent's notes these are. Rows are scoped by it, so two agents
-/// running this plugin never see each other's.
-fn notes_scope() -> &'static str {
-    objectiveai_mcp_plugin_framework::identity()
-        .agent_instance_hierarchy
-        .as_deref()
-        .unwrap_or("")
-}
-
-/// Whatever your tools need. Every tool receives `&Self`, so put
-/// clients, handles and configuration here. It is built once and
-/// shared by every call, so anything mutable needs its own interior
-/// mutability.
-struct Plugin {
-    /// The same `Tools` handed to `serve`, so a tool can change the
-    /// served set from inside a call. Not a cycle: `Tools` holds route
-    /// handlers, never a `Plugin`.
-    tools: Arc<Tools<Plugin>>,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct GreetArgs {
-    /// Who to greet.
-    name: String,
-}
-
-/// A tool returning `Json<T>` puts `T` in the result's
-/// `structured_content` instead of stringifying it, and publishes `T`'s
-/// schema alongside the tool — so an agent knows the shape before it
-/// calls, and reads fields rather than parsing prose.
-#[derive(serde::Serialize, schemars::JsonSchema)]
-struct WhoAmI {
-    /// The plugin trio the host stamped on this container. `None`
-    /// outside a laboratory container, where nothing stamps it.
-    plugin_owner: Option<String>,
-    plugin_name: Option<String>,
-    plugin_version: Option<String>,
-    /// The row `agents instances get` returned, verbatim. Embedding the
-    /// SDK's own response type rather than copying its fields across
-    /// means it cannot drift, and a field added upstream appears here
-    /// for free.
-    agent: get::ResponseItem,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct NoteWriteArgs {
-    /// What to file the note under. Writing the same key twice
-    /// replaces it.
-    key: String,
-    /// The note.
-    value: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct NoteReadArgs {
-    /// The key given to `scaffold_note_write_deleteme`.
-    key: String,
-}
-
-#[derive(serde::Serialize, schemars::JsonSchema)]
-struct Note {
-    key: String,
-    value: String,
-    /// RFC3339, and a `String` because it is cast to text in the
-    /// query. Decoding a `TIMESTAMPTZ` as a real time type needs
-    /// sqlx's `chrono` or `time` feature, which the framework does not
-    /// enable — so the cast is what keeps this working with the sqlx
-    /// you actually have.
-    written_at: String,
-}
-
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-struct CredentialCallArgs {
-    /// The endpoint to call. The credential is sent as its
-    /// `Authorization` header.
-    url: String,
-}
-
-#[derive(serde::Serialize, schemars::JsonSchema)]
-struct CredentialCall {
-    /// `"database"` when a stored credential was reused, `"channel"`
-    /// when one was asked for. Worth reporting: it is the difference
-    /// between a call that bothered a human and one that did not.
-    credential_source: String,
-    status: u16,
-    body: String,
-}
-
-/// Returned as a tool result with `is_error`, never as a protocol
-/// error, so `step` survives to whoever is reading. A protocol error
-/// is for "this call was malformed"; everything below is the call
-/// working correctly and the WORLD not cooperating, which an agent can
-/// reason about and retry.
-#[derive(serde::Serialize, schemars::JsonSchema)]
-struct CredentialFailure {
-    /// Where it broke: `database`, `publish`, `subscribe`, `open`,
-    /// `credential`, `store`, or `request`.
-    step: String,
-    error: String,
-}
-
-fn failed(step: &str, error: impl Into<String>) -> CredentialFailure {
-    CredentialFailure {
-        step: step.to_string(),
-        error: error.into(),
+    let lower = text.to_ascii_lowercase();
+    let start = ["<!doctype html", "<html ", "<html>"]
+        .iter()
+        .filter_map(|needle| lower.find(needle))
+        .min();
+    match start {
+        Some(start) => Ok(text[start..]
+            .trim_end()
+            .trim_end_matches('`')
+            .trim_end()
+            .to_string()),
+        None => Err(format!("no HTML document in the \"{label}\" response")),
     }
 }
 
-#[derive(serde::Serialize, schemars::JsonSchema)]
-struct Switched {
-    /// The tool that just appeared or disappeared.
-    tool: String,
-    /// Whether it is now being served.
-    enabled: bool,
+/// Normalize one direction, defaulting rather than failing — a malformed
+/// field should cost that field, not the whole run.
+fn normalize_direction(raw: &serde_json::Value, index: usize) -> Direction {
+    const SLOTS: [&str; 5] = ["background", "surface", "accent", "text", "muted"];
+    const FALLBACK: [&str; 5] = ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"];
+
+    let palette: Vec<String> = match raw.get("palette") {
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(|c| c.as_str().map(str::to_string))
+            .collect(),
+        // The live failure the prompt shouts about: an object keyed by slot.
+        Some(serde_json::Value::Object(map)) => SLOTS
+            .iter()
+            .filter_map(|slot| map.get(*slot).and_then(|c| c.as_str()).map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    let field = |key: &str| {
+        raw.get(key)
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    Direction {
+        name: match raw.get("name").and_then(|value| value.as_str()) {
+            Some(name) => name.to_string(),
+            None => format!("Direction {}", index + 1),
+        },
+        description: field("description"),
+        palette: if palette.len() == 5 {
+            palette
+        } else {
+            FALLBACK.iter().map(|hex| (*hex).to_string()).collect()
+        },
+        typography: match raw.get("typography").and_then(|value| value.as_str()) {
+            Some(typography) => typography.to_string(),
+            None => "system-ui, sans-serif".to_string(),
+        },
+        mood: field("mood"),
+    }
 }
 
-/// Both tools are named to be impossible to ship by accident. An agent
-/// that can see `..._deleteme` is looking at a plugin whose author
-/// never got to the part where they wrote their own tools — which is
-/// worth finding out from the tool list rather than from the output.
-/// Delete them; they exist to be read once and removed.
+fn normalize_invention(parsed: &serde_json::Value) -> Result<Invention, String> {
+    let directions: Vec<Direction> = parsed
+        .get("directions")
+        .and_then(|directions| directions.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, raw)| normalize_direction(raw, index))
+                .collect()
+        })
+        .unwrap_or_default();
+    if directions.is_empty() {
+        return Err("the model returned no directions".to_string());
+    }
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut states: Vec<String> = Vec::new();
+    if let Some(items) = parsed.get("states").and_then(|states| states.as_array()) {
+        for state in items.iter().filter_map(|state| state.as_str()) {
+            let key = state.to_lowercase();
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            states.push(state.to_string());
+            if states.len() == 3 {
+                break;
+            }
+        }
+    }
+
+    Ok(Invention { directions, states })
+}
+
+// ── The plugin ──────────────────────────────────────────────────────────
+
+/// Whatever the tools need. Every tool receives `&Self`. Phosphene's tools
+/// hold nothing between calls — each spawns an agent and returns what it said
+/// — so this is empty, and the served set never changes.
+#[derive(Clone)]
+struct Plugin;
+
 #[rmcp::tool_router]
 impl Plugin {
-    #[rmcp::tool(description = "Scaffold example, delete me. Greets someone by name.")]
-    async fn scaffold_greet_deleteme(
-        &self,
-        Parameters(args): Parameters<GreetArgs>,
-    ) -> String {
-        format!("Hello, {}!", args.name)
-    }
-
-    /// Looks the plugin's OWN agent up, by running `agents instances
-    /// get` back through the host.
-    ///
-    /// Two things worth copying out of this one. The identity the host
-    /// stamped on the container is readable before any call arrives,
-    /// so a plugin knows which agent it belongs to without being told.
-    /// And a plugin can drive the CLI: `command_executor()` sends the
-    /// request to the host, which runs it and streams the rows back.
     #[rmcp::tool(
-        description = "Scaffold example, delete me. Reports who this plugin is running as."
+        description = "Invent 3 genuinely contrasting visual design directions for a \
+                       design brief. Each carries a name, a described visual strategy, \
+                       a 5-colour palette (background, surface, accent, text, muted), \
+                       a system font stack and a mood. Also picks 3 states \
+                       (views/screens) that suit this particular brief and are SHARED \
+                       across all directions, so results can be compared side by side. \
+                       Follow with render_state once per (direction x state)."
     )]
-    async fn scaffold_whoami_deleteme(&self) -> Result<Json<WhoAmI>, rmcp::ErrorData> {
-        let identity = objectiveai_mcp_plugin_framework::identity();
-
-        // Absent outside a laboratory container — `cargo run` on a
-        // laptop gets an empty environment, and there is no agent to
-        // ask about. An error rather than a half-filled answer: the
-        // question has no meaning here, which is different from the
-        // agent having nothing to report.
-        let Some(hierarchy) = identity.agent_instance_hierarchy.as_deref() else {
-            return Err(rmcp::ErrorData::internal_error(
-                "no agent instance in the environment — this plugin is not \
-                 running inside ObjectiveAI",
-                None,
-            ));
-        };
-
-        // `agents instances get` targets an EXACT agent, addressed as a
-        // lineage prefix plus a leaf id. The host stamps the whole
-        // hierarchy as one slash-joined string, so split off the last
-        // segment; a hierarchy with no slash is a root agent, which has
-        // no prefix.
-        let (parent, leaf) = match hierarchy.rsplit_once('/') {
-            Some((parent, leaf)) => (Some(parent.to_string()), leaf.to_string()),
-            None => (None, hierarchy.to_string()),
-        };
-
-        let request = get::Request {
-            path_type: get::Path::AgentsInstancesGet,
-            targets: vec![get::Target::Direct {
-                parent_agent_instance_hierarchy: parent,
-                agent_instance: leaf,
-            }],
-            base: Default::default(),
-        };
-
-        // The identity argument is `None` on purpose. The HOST decides
-        // who a plugin is — it stamps the trio from the image
-        // coordinates and refuses any claim off the wire — so a plugin
-        // passing its own would be asserting nothing.
-        let stream = get::execute(
-            &objectiveai_mcp_plugin_framework::command_executor(),
-            request,
-            None,
-        )
-        .await
-        .map_err(|error| {
-            rmcp::ErrorData::internal_error(format!("agents instances get: {error}"), None)
-        })?;
-
-        // One target resolves to one row, but the command streams, so
-        // take the first and stop rather than assuming a count.
-        let agent = match std::pin::pin!(stream).next().await {
-            Some(Ok(item)) => item,
-            Some(Err(error)) => {
-                return Err(rmcp::ErrorData::internal_error(
-                    format!("agents instances get: {error}"),
-                    None,
-                ));
-            }
-            // An explicitly-named target always yields a row —
-            // zero-filled when the agent has no activity — so an empty
-            // stream means it does not exist, not that it is idle.
-            None => {
-                return Err(rmcp::ErrorData::internal_error(
-                    format!("no agent instance found for {hierarchy}"),
-                    None,
-                ));
-            }
-        };
-
-        Ok(Json(WhoAmI {
-            plugin_owner: identity.plugin_owner.clone(),
-            plugin_name: identity.plugin_name.clone(),
-            plugin_version: identity.plugin_version.clone(),
-            agent,
-        }))
-    }
-
-    /// Calls an endpoint with a credential, asking a person for that
-    /// credential exactly once.
-    ///
-    /// The stored credential is what makes this conditional: the
-    /// channel is only published when the database has nothing for
-    /// this agent, so the first call may wait on a human and every
-    /// call after it will not.
-    ///
-    /// Returns failures as a tool RESULT rather than a protocol error
-    /// — see [`CredentialFailure`].
-    #[rmcp::tool(
-        description = "Scaffold example, delete me. Calls a URL with a credential, \
-                       asking for one through a viewer channel if none is stored."
-    )]
-    async fn scaffold_credential_call_deleteme(
+    async fn invent_directions(
         &self,
-        Parameters(args): Parameters<CredentialCallArgs>,
-    ) -> rmcp::model::CallToolResult {
-        match credential_call(&args.url).await {
-            Ok(call) => match serde_json::to_value(&call) {
-                Ok(value) => rmcp::model::CallToolResult::structured(value),
-                Err(error) => rmcp::model::CallToolResult::structured_error(
-                    serde_json::json!({ "step": "encode", "error": error.to_string() }),
-                ),
-            },
-            Err(failure) => rmcp::model::CallToolResult::structured_error(
-                serde_json::json!({ "step": failure.step, "error": failure.error }),
-            ),
+        Parameters(args): Parameters<InventArgs>,
+    ) -> Result<Json<Invention>, rmcp::ErrorData> {
+        let brief = args.brief.trim();
+        if brief.is_empty() {
+            return Err(internal("brief is empty"));
         }
+
+        let text = run_agent(
+            INVENT_PROMPT,
+            brief,
+            INVENTION_MODEL,
+            // High, deliberately: this step is asked for contrast.
+            0.9,
+            2000,
+            INVENT_TIMEOUT,
+        )
+        .await?;
+
+        let parsed = parse_json_loose(&text).map_err(internal)?;
+        let invention = normalize_invention(&parsed).map_err(internal)?;
+        Ok(Json(invention))
     }
 
-    /// Writes a note to the plugin's database, replacing any note
-    /// already under that key.
     #[rmcp::tool(
-        description = "Scaffold example, delete me. Stores a note under a key."
+        description = "Render ONE state of ONE design direction as a complete, \
+                       self-contained 400x720 XHTML document — no external resources, \
+                       no JavaScript. Render a direction's FIRST state with no \
+                       anchor_html, then pass the document it returns as anchor_html \
+                       for that direction's remaining states: it pins the shared \
+                       chrome (nav, spacing scale, component styling) so the states \
+                       read as one product. Different directions are independent and \
+                       can be rendered in parallel."
     )]
-    async fn scaffold_note_write_deleteme(
+    async fn render_state(
         &self,
-        Parameters(args): Parameters<NoteWriteArgs>,
-    ) -> Result<Json<Note>, rmcp::ErrorData> {
-        let pool = notes_pool().await?;
-
-        // Bound parameters, never formatted into the string. `$1` is
-        // sent to Postgres as DATA, so a note whose value is
-        // `'; DROP TABLE ...` is just an odd note.
-        let row = sqlx::query(
-            "
-            INSERT INTO scaffold_notes_deleteme
-                (agent_instance_hierarchy, note_key, note_value)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (agent_instance_hierarchy, note_key) DO UPDATE
-                SET note_value = EXCLUDED.note_value, written_at = now()
-            RETURNING note_value, written_at::text AS written_at
-            ",
-        )
-        .bind(notes_scope())
-        .bind(&args.key)
-        .bind(&args.value)
-        .fetch_one(&pool)
-        .await
-        .map_err(|error| {
-            rmcp::ErrorData::internal_error(error_chain("write the note", &error), None)
-        })?;
-
-        Ok(Json(Note {
-            key: args.key,
-            value: row.get("note_value"),
-            written_at: row.get("written_at"),
-        }))
-    }
-
-    /// Reads back what `scaffold_note_write_deleteme` stored.
-    #[rmcp::tool(
-        description = "Scaffold example, delete me. Reads the note stored under a key."
-    )]
-    async fn scaffold_note_read_deleteme(
-        &self,
-        Parameters(args): Parameters<NoteReadArgs>,
-    ) -> Result<Json<Note>, rmcp::ErrorData> {
-        let pool = notes_pool().await?;
-
-        let row = sqlx::query(
-            "
-            SELECT note_value, written_at::text AS written_at
-            FROM scaffold_notes_deleteme
-            WHERE agent_instance_hierarchy = $1 AND note_key = $2
-            ",
-        )
-        .bind(notes_scope())
-        .bind(&args.key)
-        // `fetch_optional`, not `fetch_one`: no note under that key is
-        // an ordinary answer, and would otherwise arrive as
-        // `RowNotFound` dressed up as a database failure.
-        .fetch_optional(&pool)
-        .await
-        .map_err(|error| {
-            rmcp::ErrorData::internal_error(error_chain("read the note", &error), None)
-        })?;
-
-        let Some(row) = row else {
-            return Err(rmcp::ErrorData::invalid_params(
-                format!("no note stored under {:?}", args.key),
-                None,
-            ));
+        Parameters(args): Parameters<RenderArgs>,
+    ) -> Result<Json<Rendered>, rmcp::ErrorData> {
+        let label = args.label.trim();
+        if label.is_empty() {
+            return Err(internal("label is empty"));
+        }
+        let states = if args.states.is_empty() {
+            vec![label.to_string()]
+        } else {
+            args.states.clone()
         };
 
-        Ok(Json(Note {
-            key: args.key,
-            value: row.get("note_value"),
-            written_at: row.get("written_at"),
-        }))
-    }
-
-    /// Flips the second tool on or off, and the agent's tool list
-    /// changes underneath it.
-    ///
-    /// This tool ITSELF only exists when the agent declared the
-    /// `switch` argument — a plugin whose arguments did not ask for
-    /// the feature serves neither of the pair, and nothing here can
-    /// talk it into existing.
-    #[rmcp::tool(
-        description = "Scaffold example, delete me. Toggles whether a second tool is served."
-    )]
-    async fn scaffold_switch_deleteme(&self) -> Json<Switched> {
-        // The served list IS the state. Keeping a separate flag would
-        // create a second source of truth that could disagree with what
-        // is actually routed.
-        let currently_on = self
-            .tools
-            .routes()
+        let slots = ["bg", "surface", "accent", "text", "muted"];
+        let swatches = slots
             .iter()
-            .any(|route| route.attr.name.as_ref() == SWITCHED_TOOL);
-        let enabled = !currently_on;
+            .enumerate()
+            .map(|(index, slot)| {
+                let hex = args
+                    .direction
+                    .palette
+                    .get(index)
+                    .map(String::as_str)
+                    .unwrap_or("#000000");
+                format!("{slot}={hex}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
 
-        // Swaps the served set AND sends
-        // `notifications/tools/list_changed`, so a client that re-lists
-        // on the notification sees the new set — the store lands before
-        // the notification goes out.
-        self.tools.replace(served_routes(enabled));
+        let user = format!(
+            "Direction: \"{}\" — {}\nPalette: {swatches}\nTypography: {}\nMood: {}\n\
+             State to render: \"{label}\"",
+            args.direction.name,
+            args.direction.description,
+            args.direction.typography,
+            args.direction.mood,
+        );
 
-        Json(Switched {
-            tool: SWITCHED_TOOL.to_string(),
-            enabled,
-        })
-    }
+        let text = run_agent(
+            &render_system_prompt(&states, label, args.anchor_html.as_deref()),
+            &user,
+            GENERATION_MODEL,
+            // Lower than invention's 0.9: the direction is already pinned, and
+            // this step should execute the spec rather than reinterpret it.
+            0.7,
+            8000,
+            RENDER_TIMEOUT,
+        )
+        .await?;
 
-    /// Not served until `scaffold_switch_deleteme` switches it on, so
-    /// an agent that lists tools at startup will not see it at all.
-    ///
-    /// Note it is declared exactly like any other tool. "Conditional"
-    /// is not a property of the tool — it is a property of the route
-    /// list `served_routes` builds.
-    #[rmcp::tool(
-        description = "Scaffold example, delete me. Exists only while switched on."
-    )]
-    async fn scaffold_switched_deleteme(&self) -> String {
-        "I did not exist when you listed tools.".to_string()
+        let html = extract_html(&text, label).map_err(internal)?;
+        Ok(Json(Rendered {
+            label: label.to_string(),
+            html,
+        }))
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<Infallible, std::io::Error> {
-    // The starting set: the argument gate has already been applied, and
-    // the switched tool starts off. A plugin whose tools never change
-    // can pass `Plugin::tool_router()` straight in and never think
-    // about this again.
-    let tools = Tools::new(served_routes(false));
-
-    // The plugin holds the same handle, so a tool can swap the set from
-    // inside a call. `serve` takes ownership of the state and the
-    // `Arc`, hence the clone.
-    let plugin = Plugin {
-        tools: Arc::clone(&tools),
-    };
+    // Phosphene's tool set never changes, so the full router goes straight in.
+    let tools: Arc<Tools<Plugin>> = Tools::new(Plugin::tool_router());
 
     objectiveai_mcp_plugin_framework::serve::serve(
         objectiveai_mcp_plugin_framework::config::Config::new(PORT, NAME, VERSION)
-            .with_description("Starting point for an ObjectiveAI MCP plugin.")
-            .with_instructions("Replace this with what an agent should know."),
-        plugin,
+            .with_description("Design iteration and judgment.")
+            .with_instructions(
+                "Explore a design brief visually. Call invent_directions ONCE to get 3 \
+                 contrasting directions and 3 shared states. Then, for each direction, \
+                 call render_state for the FIRST state with no anchor_html, and pass \
+                 the HTML it returns as anchor_html when rendering that direction's \
+                 remaining states. Directions are independent — render them in \
+                 parallel. Return the documents as they come back; a human is looking \
+                 at them.",
+            ),
+        Plugin,
         tools,
     )
     .await
