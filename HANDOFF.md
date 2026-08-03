@@ -257,10 +257,10 @@ provider spec. Agent completions and tools survive because they are the parts
 becoming the spec.
 
 **This confirms the biggest risk Pass 4 identified.** `docs/platform/03-changelog.md`
-§4 named issue #301 — *"make objectiveai P2P; consolidate objectiveai-api and
+§4 named issue [#301](https://github.com/ObjectiveAI/objectiveai/issues/301) — *"make objectiveai P2P; consolidate objectiveai-api and
 objectiveai-laboratory into new objectiveai-provider"* — as the only open item
 that could invalidate an entire research pass. It is no longer speculative; it
-is the roadmap. Related: #298/#299/#300 (containerize agent upstreams behind one
+is the roadmap. Related: [#298](https://github.com/ObjectiveAI/objectiveai/issues/298)/#299/#300 (containerize agent upstreams behind one
 consolidated API spec, with Rust and Python frameworks).
 
 **Three consequences, in order of importance:**
@@ -415,7 +415,7 @@ shipped exporting **nothing**, because Vite's app build strips entry signatures
 and neither import path (the `tab.html` import map, `tab.tsx`'s `@vite-ignore`
 dynamic import) is a module-graph edge. Fixed with
 `preserveEntrySignatures: "strict"`, plus two lesser defects, in
-[PR #302](https://github.com/ObjectiveAI/objectiveai/pull/302) → `v2.2.15`.
+[PR [#302](https://github.com/ObjectiveAI/objectiveai/issues/302)](https://github.com/ObjectiveAI/objectiveai/pull/302) → `v2.2.15`.
 
 **Verified end to end on 2026-08-01:** a scaffold extracted fresh from the
 `v2.2.15` tag builds, registers, and its tab renders — proven positively with a
@@ -456,7 +456,7 @@ recorded under "The §6 decisions, as made" above):
 - **Viewer-only stands.** `scaffold.sh` emits both halves, so the viewer-only
   layout is a hand-copy — that is the written reason. Spike D removed the last
   argument for an MCP half: in-page rasterization works, so phosphene does not
-  need one merely to see its own output. Track issue #287 (a JS MCP scaffold)
+  need one merely to see its own output. Track issue [#287](https://github.com/ObjectiveAI/objectiveai/issues/287) (a JS MCP scaffold)
   before ever committing to Rust.
 - **Toolchain: the scaffold's esbuild.** Vite strips entry exports (the bug we
   fixed upstream in v2.2.15); a Vite-built plugin hits it silently in its own

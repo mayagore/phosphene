@@ -10,7 +10,7 @@ versions and publish times; all 60 open issues, filtered to the plugin surface.
 
 **Note on this pass's own history:** `v2.2.15` is **ours** — the three boot-check
 defects plus a cherry-picked laboratory fix, shipped 2026-08-01 as
-[PR #302](https://github.com/ObjectiveAI/objectiveai/pull/302). This artifact
+[PR [#302](https://github.com/ObjectiveAI/objectiveai/issues/302)](https://github.com/ObjectiveAI/objectiveai/pull/302). This artifact
 therefore describes a changelog phosphene is now part of.
 
 ---
@@ -88,7 +88,7 @@ unresolvable install. Before moving the pin, check npm, not the tag list.
 
 Ranked by probability of hitting phosphene, from the open-issue set:
 
-**1. #281 — plugin whitelist, "require user sign-off before any plugin installs
+**1. [#281](https://github.com/ObjectiveAI/objectiveai/issues/281) — plugin whitelist, "require user sign-off before any plugin installs
 or runs (post-2.2.13)."** Labeled `enhancement`, open since 2026-07-21. This is
 the one to watch: it changes the *install and run* path, which is the path
 phosphene ships on. It also directly answers a gap Pass 3 §5 flagged — that
@@ -96,7 +96,7 @@ phosphene ships on. It also directly answers a gap Pass 3 §5 flagged — that
 CLI surface under the viewer's identity. A whitelist is the obvious response to
 exactly that.
 
-**2. #293 — "state-preserving hot reload for plugin tabs (React Fast Refresh,
+**2. [#293](https://github.com/ObjectiveAI/objectiveai/issues/293) — "state-preserving hot reload for plugin tabs (React Fast Refresh,
 not remount)."** Filed 2026-07-30, the day the scaffolder shipped. If it lands,
 it **obsoletes the rung-2 build constraint** that Pass 2 §6 and the boot check
 established — the constraint that a `.tsx` save must touch exactly one consumed
@@ -104,21 +104,21 @@ file. Phosphene should not over-engineer its build around a rule that may
 disappear; the conditional-CSS-copy fix is cheap and worth doing anyway, but
 nothing more elaborate.
 
-**3. #301 — "make objectiveai P2P; consolidate objectiveai-api and
+**3. [#301](https://github.com/ObjectiveAI/objectiveai/issues/301) — "make objectiveai P2P; consolidate objectiveai-api and
 objectiveai-laboratory into new objectiveai-provider."** Filed 2026-07-31, the
 newest issue in the repo. The laboratory is what builds plugin viewer images and
 runs the release path. A consolidation at that layer would rewrite the release
 ritual Pass 3 §4 documents. Large, speculative, no timeline — but it is the only
 open issue that could invalidate a whole pass.
 
-**4. #287/#288/#289 and #278/#279/#280 — MCP plugin scaffolds and frameworks for
+**4. [#287](https://github.com/ObjectiveAI/objectiveai/issues/287)/#288/#289 and [#278](https://github.com/ObjectiveAI/objectiveai/issues/278)/#279/#280 — MCP plugin scaffolds and frameworks for
 JS, Go, Python.** Six issues, all open since 2026-07-21/28. Today the only MCP
 half is Rust. **If phosphene wants an MCP half (§6.3) and would rather not write
-Rust, #287 is the issue to track** — a JS scaffold would remove the single
+Rust, [#287](https://github.com/ObjectiveAI/objectiveai/issues/287) is the issue to track** — a JS scaffold would remove the single
 biggest cost of shipping both halves.
 
-**Not a risk:** #172 (viewer in the browser), #171 (viewer as GUI swarm
-orchestrator), #253 (mobile laboratories), #259 (laboratory git viewer). All
+**Not a risk:** [#172](https://github.com/ObjectiveAI/objectiveai/issues/172) (viewer in the browser), [#171](https://github.com/ObjectiveAI/objectiveai/issues/171) (viewer as GUI swarm
+orchestrator), [#253](https://github.com/ObjectiveAI/objectiveai/issues/253) (mobile laboratories), [#259](https://github.com/ObjectiveAI/objectiveai/issues/259) (laboratory git viewer). All
 additive, none touching the plugin contract.
 
 ---
@@ -165,9 +165,9 @@ announce itself.
 ## 7. What this changes for phosphene
 
 1. **Pin exactly, upgrade deliberately, and never on the strength of a git tag.**
-2. **Do not build elaborate machinery around the hot-reload rung rule** — #293
+2. **Do not build elaborate machinery around the hot-reload rung rule** — [#293](https://github.com/ObjectiveAI/objectiveai/issues/293)
    may remove it. Make the CSS copy conditional and stop there.
-3. **Track #287 before committing to §6.3.** A JS MCP scaffold materially
+3. **Track [#287](https://github.com/ObjectiveAI/objectiveai/issues/287) before committing to §6.3.** A JS MCP scaffold materially
    changes the cost of shipping both halves.
 4. **The boot check is now a maintained asset**, not a one-off. It runs on every
    SDK bump.
@@ -180,9 +180,9 @@ announce itself.
 
 ## 8. Open questions
 
-- Does #281's whitelist land before phosphene's first release? It changes the
+- Does [#281](https://github.com/ObjectiveAI/objectiveai/issues/281)'s whitelist land before phosphene's first release? It changes the
   install path we would ship on.
-- Is there any commitment behind #301, or is it a thinking-out-loud issue? It is
+- Is there any commitment behind [#301](https://github.com/ObjectiveAI/objectiveai/issues/301), or is it a thinking-out-loud issue? It is
   the only open item that could invalidate Pass 3.
 - Does the `2-2-15` branch (still carrying `ffcb1f2`, the podman-download
   timeout fix, unmerged) get folded into a `2.2.16`, or was it superseded by our

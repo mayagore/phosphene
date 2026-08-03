@@ -382,7 +382,7 @@ Two design rules are stated repeatedly and should be treated as law:
    `daemon_execute` proxies verbatim with no allowlist
    (`daemon_proxy.rs:234-259`); a plugin tab runs any CLI command under the
    viewer's identity. This makes the *shell* boundary (Pass 2 §9) the only real
-   one, and raises the stakes on issue #281's plugin whitelist.
+   one, and raises the stakes on issue [#281](https://github.com/ObjectiveAI/objectiveai/issues/281)'s plugin whitelist.
 
 6. **A bug in the scaffold, worth reporting upstream.** `home.tsx:41-52` drains
    the browser child with `for (;;) { await subscribeViewerTab(t, KEY, 60_000) }`
@@ -438,9 +438,9 @@ Two design rules are stated repeatedly and should be treated as law:
 
 ## 10. Open questions carried forward
 
-**To Pass 4:** whether #281 (plugin whitelist) changes the install path; whether
-#293 (React Fast Refresh for plugin tabs) lands before phosphene ships and
-obsoletes the rung-2 build constraint; whether #301 (consolidate api +
+**To Pass 4:** whether [#281](https://github.com/ObjectiveAI/objectiveai/issues/281) (plugin whitelist) changes the install path; whether
+[#293](https://github.com/ObjectiveAI/objectiveai/issues/293) (React Fast Refresh for plugin tabs) lands before phosphene ships and
+obsoletes the rung-2 build constraint; whether [#301](https://github.com/ObjectiveAI/objectiveai/issues/301) (consolidate api +
 laboratory into `objectiveai-provider`, go P2P) threatens the laboratory-based
 release path.
 

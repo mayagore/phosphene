@@ -1,7 +1,7 @@
 # Boot check — the unmodified scaffold in a live viewer
 
 > ## RERUN 2026-08-01 against v2.2.15 — **ALL THREE DEFECTS FIXED, PASSES**
-> Fixes shipped in [PR #302](https://github.com/ObjectiveAI/objectiveai/pull/302)
+> Fixes shipped in [PR [#302](https://github.com/ObjectiveAI/objectiveai/issues/302)](https://github.com/ObjectiveAI/objectiveai/pull/302)
 > (merged `649b1d7cf`, released `v2.2.15`). Rerun used a scaffold extracted
 > fresh from the `v2.2.15` tag — **not** the hand-patched spike directory — so
 > every fix was exercised as shipped.
@@ -20,7 +20,7 @@
 > **The hot-reload ladder is unchanged** — CSS-only save → 0 re-imports (rung 1);
 > `.tsx` save → re-import (rung 3), because the scaffold's `styles()` still
 > rewrites every stylesheet on every tabs rebuild. That is a *scaffold build*
-> issue, deliberately not part of #302, and it remains phosphene's to solve
+> issue, deliberately not part of [#302](https://github.com/ObjectiveAI/objectiveai/issues/302), and it remains phosphene's to solve
 > (§"Consequences", item 2 below).
 >
 > **Spikes A–E are unblocked.**
