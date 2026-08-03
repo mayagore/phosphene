@@ -20,15 +20,23 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # The scaffold layout keeps the ONE manifest at the repo root and the whole
+    # npm project in `viewer/`, so every node step runs from there.
+    defaults:
+      run:
+        working-directory: viewer
     steps:
       - uses: actions/checkout@v4
       # No `version:` here on purpose — package.json's `packageManager` field is
       # the single source of truth, and action-setup errors if both are given.
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: viewer/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
+          cache-dependency-path: viewer/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm run typecheck
       - run: pnpm run build
@@ -47,7 +55,10 @@ jobs:
       - name: Build the viewer image the way the laboratory does
         run: |
           set -euo pipefail
-          podman build -t phosphene-viewer .
+          # `viewer/` is the context because the containerfile's OWN DIRECTORY
+          # is the context — the manifest path `viewer/Containerfile` only says
+          # where the file is, never what it can see.
+          podman build -t phosphene-viewer viewer
           podman create --name pv phosphene-viewer
           mkdir -p out
           podman cp pv:/dist/. out/
@@ -86,5 +97,5 @@ jobs:
       - name: Contract assertions against the release artifact
         run: |
           set -euo pipefail
-          rm -rf dist && mv out dist
-          node scripts/check-contracts.mjs
+          rm -rf viewer/dist && mv out viewer/dist
+          node viewer/scripts/check-contracts.mjs

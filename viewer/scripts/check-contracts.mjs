@@ -19,9 +19,18 @@
  *      that made every ObjectiveAI ≤2.2.14 viewer unable to render any plugin.
  */
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const DIST = "dist";
+// Resolved from THIS FILE, not the cwd. The scaffold layout puts the one
+// manifest at the repo root and the viewer half in `viewer/`, so the two live
+// at different depths — and CI runs this from the root while `pnpm run
+// check:contracts` runs it from `viewer/`.
+const HERE = dirname(fileURLToPath(import.meta.url)); // viewer/scripts
+const VIEWER = resolvePath(HERE, "..");
+const ROOT = resolvePath(VIEWER, "..");
+const MANIFEST = join(ROOT, "objectiveai.json");
+const DIST = join(VIEWER, "dist");
 const REACT_SPECIFIERS = [
   "react",
   "react-dom",
@@ -33,7 +42,7 @@ const REACT_SPECIFIERS = [
 const failures = [];
 const notes = [];
 
-const manifest = JSON.parse(readFileSync("objectiveai.json", "utf8"));
+const manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
 const viewer = manifest.viewer;
 if (!viewer) {
   failures.push("objectiveai.json declares no `viewer` half");

@@ -2,3 +2,6 @@
 dist/
 node_modules/
 out/
+
+# Guard: a bad shell redirect once committed a 10MB blob here.
+undefined/

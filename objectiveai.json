@@ -1,7 +1,7 @@
 {
   "description": "Design iteration and judgment — invent contrasting design directions, render them across shared states, and score them with a swarm.",
   "viewer": {
-    "containerfile": "Containerfile",
+    "containerfile": "viewer/Containerfile",
     "output": "/dist",
     "tabs": [
       {
@@ -10,6 +10,6 @@
         "styles": ["./phosphene.css"]
       }
     ],
-    "development": { "output": "dist" }
+    "development": { "output": "viewer/dist" }
   }
 }

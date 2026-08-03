@@ -5,9 +5,11 @@
 # the installed `viewer/` directory. The image is never STARTED — all
 # work happens in RUN steps.
 #
-# Reproduce a build exactly as the host does:
+# Reproduce a build exactly as the host does (from the REPO ROOT — this
+# file's own directory is the context, which is why nothing below carries a
+# `viewer/` prefix even though the manifest path does):
 #
-#   podman build -t phosphene-viewer .
+#   podman build -t phosphene-viewer viewer
 #   podman create --name pv phosphene-viewer && podman cp pv:/dist/. out/
 #   podman rm pv && podman rmi phosphene-viewer
 #
