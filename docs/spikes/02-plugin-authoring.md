@@ -135,8 +135,34 @@ refuses an agent declaring `plugins` when there is no reverse-attached CLI, and
 that was the plan's one unsettled blocker. A CLI-spawned agent qualifies. What
 opens the gate is `laboratories spawn`, exactly as the scaffold README implies.
 
-**Still untested: the same call from a VIEWER TAB.** That is the remaining
-unknown, and it is the one that decides phosphene's shape.
+### ✅ And from a VIEWER TAB too — 2026-08-03
+
+The version that actually decides phosphene's shape. Maya drove it: brief
+*"a livestream mobile app where viewers pick teams"*, `via tools` button.
+
+The tab showed `phosphene_invent_directions` mid-call, live, beside the agent's
+own instance id. The run completed, and the viewer's log inbox carries the line
+that only prints once the tool returned **and** its JSON parsed:
+
+```
+{"source":"phosphene","level":"info","message":"phosphene: via tools — phosphene_invent_directions"}
+```
+
+**So the whole lane works over the viewer transport:**
+
+```
+tab → daemon_execute (Tauri IPC) → daemon → agent declaring plugins
+    → laboratory → phosphene container → tool
+    → nested agent completion → structured JSON → back to the tab
+```
+
+`ClientObjectiveaiMcpUnavailable` never appeared. **The reverse-attach gate is
+not a gate from the viewer either** — what opens it is a running laboratory
+host, not the kind of client. Every open question in the plan's Phase 0 is now
+answered, and the answer is yes.
+
+The plan's contingency — "if step 3 fails, the plan changes shape" — does not
+fire. The tab-as-display architecture is buildable as designed, today, on 2.2.15.
 
 **Two wire facts confirmed empirically**, not just read from source: tool calls
 arrive as deltas on **assistant** messages under `tool_calls`, and the result
