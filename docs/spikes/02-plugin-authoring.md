@@ -86,11 +86,28 @@ to the point of failure before anything is reported.
 
 ## 4. Smaller friction
 
-**The dev registration vanished mid-session.** `development plugins viewer list`
-returned phosphene early on, then returned empty later, with no action taken
-against it in between. Re-creating it reported `"replaced": false`, confirming
-it had genuinely been dropped rather than overwritten. The laboratory spawn is
-the only notable event in between. Unexplained; worth watching for.
+**Dev registrations live in daemon memory only, and a reboot drops them.**
+Confirmed 2026-08-03: after a restart both halves were gone and nothing was
+running. Expected rather than a bug — but the failure mode is poor. With the
+daemon down, `development plugins viewer list` **returns empty rather than
+erroring**, so "the daemon is not running" and "nothing is registered" look
+identical. And an unregistered plugin does not fail either — it silently builds
+from GitHub as though nothing were registered, which presents as "my edits do
+nothing." `scripts/resume.sh` exists for this, and checks the daemon *process*
+rather than trusting a command's output.
+
+**One instance is still unexplained.** On 2026-08-02 a registration vanished
+mid-session with no reboot, and re-creating it reported `"replaced": false` —
+genuinely dropped, not overwritten. The laboratory spawn is the only notable
+event in between. The reboot explains 2026-08-03; it does not explain that one.
+
+**A local Claude Code login is required for `upstream: "claude_agent_sdk"`, and
+the error when it lapses is misleading.** An expired OAuth token surfaces through
+ObjectiveAI as `Claude Code returned an error result: success` — the runner
+reports the SDK's `subtype` ("success") rather than its `is_error` / 401. The
+real message is only visible by running `claude -p … --output-format json`
+directly: *"Failed to authenticate. API Error: 401 OAuth access token has
+expired."*
 
 **The vendored podman cannot be driven by hand without help.** Invoking it
 directly fails with `could not find "gvproxy"` — it searches

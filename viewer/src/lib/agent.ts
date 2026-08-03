@@ -226,8 +226,22 @@ export async function runAgent(
  */
 export function parseJsonLoose(text: string): unknown {
   const fenced = text.replace(/```(?:json)?\s*([\s\S]*?)```/g, "$1").trim();
+  const attempt = (slice: string): unknown => {
+    try {
+      return JSON.parse(slice);
+    } catch {
+      // A trailing comma before `}` or `]` is the one malformation models
+      // produce often enough to be worth repairing, and the only one that is
+      // unambiguous: JSON has no construct where it is meaningful, so removing
+      // it cannot change what the model meant. Anything beyond this is
+      // guessing, and guessing is how the legacy salvage ladder grew to four
+      // layers. Observed live, on invention output.
+      return JSON.parse(stripTrailingCommas(slice));
+    }
+  };
+
   try {
-    return JSON.parse(fenced);
+    return attempt(fenced);
   } catch {
     // Fall through to brace matching.
   }
@@ -253,8 +267,39 @@ export function parseJsonLoose(text: string): unknown {
     if (ch === open) depth++;
     else if (ch === close) {
       depth--;
-      if (depth === 0) return JSON.parse(fenced.slice(start, i + 1));
+      if (depth === 0) return attempt(fenced.slice(start, i + 1));
     }
   }
   throw new Error("unterminated JSON in the model's response");
+}
+
+/** Remove `,` that only separates nothing from a closing brace or bracket.
+ * String contents are skipped, so a comma inside a value is untouched. */
+export function stripTrailingCommas(json: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i]!;
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ",") {
+      // Look past whitespace: a comma followed by a closer separates nothing.
+      let j = i + 1;
+      while (j < json.length && /\s/.test(json[j]!)) j++;
+      if (json[j] === "}" || json[j] === "]") continue; // drop it
+    }
+    out += ch;
+  }
+  return out;
 }

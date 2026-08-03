@@ -122,8 +122,11 @@ Design quality:
 - Typography hierarchy: clear distinction between headings, subheadings, body, and labels
 - Composition: consider visual weight distribution, focal points, and reading flow
 
-Completeness — this is a finished screen, not a wireframe:
-- Fill the full {ARTBOARD_WIDTH}×{ARTBOARD_HEIGHT} frame. Deliberate empty space is fine; an unfinished screen is not
+Completeness — a finished screen that FITS:
+- The frame is exactly {ARTBOARD_WIDTH}×{ARTBOARD_HEIGHT} and DOES NOT SCROLL. `overflow: hidden` means anything past the bottom edge is invisible, not reachable. Everything you draw must fit inside it.
+- Budget the vertical space before you write: header + content + any footer must sum to {ARTBOARD_HEIGHT}px or less. A list that runs off the bottom is WORSE than a shorter list — choose fewer rows over cut-off rows, and never let a row, card or button be sliced by the edge
+- Do NOT rely on a scrollable or clipped region to absorb the excess. Content hidden inside an `overflow: hidden` box reads as cut off, exactly like content past the page edge
+- Within that budget, compose to fill the frame. Deliberate whitespace is fine; an unfinished screen is not
 - Include the furniture a real screen of this kind has: header or nav, the primary content at real density (a list has several rows, a feed has several cards, a form has all its fields), and the supporting detail around it — labels, metadata, secondary actions, status
 - Design the details rather than defaulting: borders, corner radii, dividers, iconography drawn in CSS, considered type sizes
 - A single centered card with one heading and one button is a placeholder. Do better than that."##
@@ -382,7 +385,7 @@ fn strip_fences(text: &str) -> String {
 fn parse_json_loose(text: &str) -> Result<serde_json::Value, String> {
     let stripped = strip_fences(text);
     let trimmed = stripped.trim();
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+    if let Some(value) = try_parse(trimmed) {
         return Ok(value);
     }
 
@@ -419,12 +422,62 @@ fn parse_json_loose(text: &str) -> Result<serde_json::Value, String> {
             depth -= 1;
             if depth == 0 {
                 let slice: String = chars[start..=start + offset].iter().collect();
-                return serde_json::from_str(&slice)
-                    .map_err(|error| format!("recovered JSON did not parse: {error}"));
+                return try_parse(&slice)
+                    .ok_or_else(|| "recovered JSON did not parse".to_string());
             }
         }
     }
     Err("unterminated JSON in the model's response".to_string())
+}
+
+/// Parse, and if that fails, parse again with trailing commas removed.
+///
+/// A trailing comma before `}` or `]` is the one malformation models produce
+/// often enough to be worth repairing, and the only one that is unambiguous:
+/// JSON has no construct where it is meaningful, so removing it cannot change
+/// what the model meant. Anything beyond this is guessing, and guessing is how
+/// the legacy salvage ladder grew to four layers. Observed live.
+fn try_parse(slice: &str) -> Option<serde_json::Value> {
+    if let Ok(value) = serde_json::from_str(slice) {
+        return Some(value);
+    }
+    serde_json::from_str(&strip_trailing_commas(slice)).ok()
+}
+
+/// Remove `,` that only separates nothing from a closing brace or bracket.
+/// String contents are skipped, so a comma inside a value is untouched.
+fn strip_trailing_commas(json: &str) -> String {
+    let chars: Vec<char> = json.chars().collect();
+    let mut out = String::with_capacity(json.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, ch) in chars.iter().enumerate() {
+        if in_string {
+            out.push(*ch);
+            if escaped {
+                escaped = false;
+            } else if *ch == '\\' {
+                escaped = true;
+            } else if *ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if *ch == '"' {
+            in_string = true;
+            out.push(*ch);
+            continue;
+        }
+        if *ch == ',' {
+            // Look past whitespace: a comma before a closer separates nothing.
+            let next = chars[i + 1..].iter().find(|c| !c.is_whitespace());
+            if matches!(next, Some('}') | Some(']')) {
+                continue;
+            }
+        }
+        out.push(*ch);
+    }
+    out
 }
 
 /// Pull the document out of a generation response.

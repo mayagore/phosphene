@@ -71,8 +71,11 @@ Design quality:
 - Typography hierarchy: clear distinction between headings, subheadings, body, and labels
 - Composition: consider visual weight distribution, focal points, and reading flow
 
-Completeness — this is a finished screen, not a wireframe:
-- Fill the full ${ARTBOARD_WIDTH}×${ARTBOARD_HEIGHT} frame. Deliberate empty space is fine; an unfinished screen is not
+Completeness — a finished screen that FITS:
+- The frame is exactly ${ARTBOARD_WIDTH}×${ARTBOARD_HEIGHT} and DOES NOT SCROLL. \`overflow: hidden\` means anything past the bottom edge is invisible, not reachable. Everything you draw must fit inside it.
+- Budget the vertical space before you write: header + content + any footer must sum to ${ARTBOARD_HEIGHT}px or less. A list that runs off the bottom is WORSE than a shorter list — choose fewer rows over cut-off rows, and never let a row, card or button be sliced by the edge
+- Do NOT rely on a scrollable or clipped region to absorb the excess. Content hidden inside an \`overflow: hidden\` box reads as cut off, exactly like content past the page edge
+- Within that budget, compose to fill the frame. Deliberate whitespace is fine; an unfinished screen is not
 - Include the furniture a real screen of this kind has: header or nav, the primary content at real density (a list has several rows, a feed has several cards, a form has all its fields), and the supporting detail around it — labels, metadata, secondary actions, status
 - Design the details rather than defaulting: borders, corner radii, dividers, iconography drawn in CSS, considered type sizes
 - A single centered card with one heading and one button is a placeholder. Do better than that.`;
