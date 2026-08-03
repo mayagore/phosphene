@@ -108,6 +108,9 @@ const STALL: Duration = Duration::from_secs(120);
 /// Labelled backstops. Every outer layer strictly outlasts every inner one.
 const INVENT_TIMEOUT: Duration = Duration::from_secs(180);
 const RENDER_TIMEOUT: Duration = Duration::from_secs(600);
+/// A judge reads ~30 KB and writes ~2 KB — longer than invention, far shorter
+/// than generation.
+const SCORE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// An anchor rides in as INPUT on every sibling state, so it is paid for once
 /// per sibling. Generous, but bounded.
@@ -250,6 +253,10 @@ pub struct InventArgs {
 pub struct RenderArgs {
     /// The direction to render, exactly as `invent_directions` returned it.
     pub direction: Direction,
+    /// Which direction this is, by its index in `invent_directions`' result.
+    /// Keys the plugin-side cache that `score_direction` reads — artboards are
+    /// ~9 KB each and do NOT travel back through the agent's context.
+    pub direction_index: u32,
     /// Every shared state in the exploration, in order. The first is the
     /// anchor.
     pub states: Vec<String>,
@@ -267,6 +274,104 @@ pub struct Rendered {
     pub label: String,
     /// A complete, self-contained XHTML document, 400×720.
     pub html: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ScoreArgs {
+    /// The design brief the direction was invented for — fitness is judged
+    /// against THIS text, so pass it verbatim.
+    pub brief: String,
+    /// Which direction to score, by its `invent_directions` index. Its
+    /// artboards must already have been rendered in THIS run — `render_state`
+    /// caches them in the plugin, and this tool reads that cache.
+    pub direction_index: u32,
+    /// The judge. REQUIRED, no default: the agent (and its human) choose the
+    /// jury; phosphene owns only the rubric. Call this tool once per judge —
+    /// the spread between judges is the signal, so pick models that differ.
+    pub model: String,
+    /// "openrouter" (default) or "claude_agent_sdk". Note claude also
+    /// GENERATES the artboards, so a claude judge marks its own homework.
+    #[serde(default)]
+    pub upstream: Option<String>,
+}
+
+/// One judge's verdict on one direction. Four numbers, no aggregate — an
+/// overall score would reintroduce the halo effect the separate dimensions
+/// exist to prevent (docs/scoring.md §1).
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Scores {
+    /// Is it well made? Hierarchy, spacing, type, colour discipline, detail.
+    pub craft: f64,
+    /// Genuinely its own direction, or a generic template reskinned?
+    pub distinctiveness: f64,
+    /// Does it serve THIS brief, or would it suit any brief?
+    pub fitness: f64,
+    /// Do the states read as one product?
+    pub coherence: f64,
+}
+
+/// The written why for each score, in Sadler form: the expected standard, the
+/// gap, and how to close it — naming the element it is about.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Notes {
+    pub craft: String,
+    pub distinctiveness: String,
+    pub fitness: String,
+    pub coherence: String,
+}
+
+/// Computed, never judged — asking a model to eyeball arithmetic is strictly
+/// worse than doing the arithmetic (docs/scoring.md §3). Frame fit is the one
+/// fact NOT here: it needs layout, so the viewer computes it where the
+/// artboards already render.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct Facts {
+    /// WCAG contrast ratios between declared palette slots (1.0–21.0).
+    /// 4.5:1 is the AA threshold for body text.
+    pub contrast: ContrastFacts,
+    /// Does the document actually use its declared palette, or drift?
+    pub palette: PaletteFacts,
+    /// Do the declared font stacks appear in the CSS?
+    pub fonts_declared_used: bool,
+    /// `<script` never appears (the sandbox enforces it; this reports it).
+    pub javascript_free: bool,
+    /// No `src=`/`href=`/`url(` pointing at http(s). The xmlns URI is exempt.
+    pub external_free: bool,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ContrastFacts {
+    pub text_on_bg: Option<f64>,
+    pub text_on_surface: Option<f64>,
+    pub muted_on_bg: Option<f64>,
+    pub accent_on_bg: Option<f64>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct PaletteFacts {
+    /// How many of the 5 declared colours appear in the markup.
+    pub declared_used: u32,
+    /// Distinct hex colours in the markup that are NOT in the palette.
+    /// Palette drift is the failure Stitch is publicly known for, and it is
+    /// invisible to a judge reading prose.
+    pub foreign_colours: u32,
+    /// Share of hex occurrences that are declared colours (0–1). Colours
+    /// written as rgb()/named escape this net — an approximation, and labelled
+    /// as one.
+    pub adherence: f64,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ScoreResult {
+    pub direction: String,
+    /// The model that judged — echoed so a panel's results self-describe.
+    pub judge: String,
+    pub scores: Scores,
+    pub notes: Notes,
+    pub facts: Facts,
+    /// Which states the judge saw, in order. Fewer than the full set means
+    /// coherence was judged from a partial board — visible, not hidden.
+    pub states_seen: Vec<String>,
 }
 
 // ── Running an agent ────────────────────────────────────────────────────
@@ -289,6 +394,10 @@ fn internal(message: impl Into<String>) -> rmcp::ErrorData {
 /// The identity argument is `None` on purpose: the HOST decides who a plugin
 /// is — it stamps the trio from the image coordinates and refuses any claim
 /// off the wire — so a plugin passing its own would be asserting nothing.
+// Eight arguments is at clippy's threshold, deliberately: every call site
+// reads as a table of what differs between invention, generation and judging.
+// A params struct would hide exactly that comparison.
+#[allow(clippy::too_many_arguments)]
 async fn run_agent(
     system: &str,
     user: &str,
@@ -552,20 +661,20 @@ fn strip_trailing_commas(json: &str) -> String {
 /// writes the document. Taking it is strictly better than failing the cell.
 fn extract_html(text: &str, label: &str) -> Result<String, String> {
     if let Ok(value) = parse_json_loose(text) {
-        if let Some(html) = value.get("html").and_then(|h| h.as_str()) {
-            if !html.trim().is_empty() {
-                return Ok(html.to_string());
-            }
+        if let Some(html) = value.get("html").and_then(|h| h.as_str())
+            && !html.trim().is_empty()
+        {
+            return Ok(html.to_string());
         }
         if let Some(states) = value.get("states").and_then(|s| s.as_array()) {
             let chosen = states
                 .iter()
                 .find(|state| state.get("label").and_then(|l| l.as_str()) == Some(label))
                 .or_else(|| states.first());
-            if let Some(html) = chosen.and_then(|s| s.get("html")).and_then(|h| h.as_str()) {
-                if !html.trim().is_empty() {
-                    return Ok(html.to_string());
-                }
+            if let Some(html) = chosen.and_then(|s| s.get("html")).and_then(|h| h.as_str())
+                && !html.trim().is_empty()
+            {
+                return Ok(html.to_string());
             }
         }
     }
@@ -665,13 +774,325 @@ fn normalize_invention(parsed: &serde_json::Value) -> Result<Invention, String> 
     Ok(Invention { directions, states })
 }
 
+// ── Judging ─────────────────────────────────────────────────────────────
+//
+// One call = one judge on one direction. The rubric here is phosphene's; the
+// jury is the agent's. Dimensions are Maya's four; calibration and critique
+// form are the legacy research's (docs/scoring.md).
+
+/// The judge's brief. Deliberately NOT asked for: an overall score (halo
+/// effect), usability/interaction judgments (documented unreliable from
+/// static markup), or anything the facts compute (arithmetic is not opinion).
+fn judge_system_prompt() -> String {
+    "You are one judge on a design jury, scoring ONE design direction rendered as \
+     static screens. Other judges score independently; disagreement between judges \
+     is expected and valuable, so score from your own reading, not from what a \
+     typical reviewer would say.\n\n\
+     Score EXACTLY these four dimensions, each 0.0-1.0:\n\
+     - craft: is it well made? Visual hierarchy, spacing rhythm, typographic \
+     discipline, colour usage, drawn detail.\n\
+     - distinctiveness: is this genuinely its own direction, or a generic \
+     template with the palette swapped?\n\
+     - fitness: does it serve THIS brief specifically, or would it suit any \
+     brief? Judge against the brief text you are given.\n\
+     - coherence: do the states read as one product? Same chrome, same spacing \
+     scale, same component language.\n\n\
+     Calibration — anchor to these, and use the whole scale:\n\
+     0.5 = generic (competent, forgettable) · 0.7 = good · 0.85 = \
+     portfolio-worthy · 0.95 = exceptional.\n\n\
+     For each dimension write ONE note in exactly three parts: the expected \
+     standard, the gap between this design and that standard, and how to close \
+     it. Name the specific element each note is about (a selector, a component, \
+     a region) — a note that names nothing is not actionable. Write improvement \
+     instructions, not opinions.\n\n\
+     Do NOT score usability or interactions (you are reading static markup), do \
+     NOT compute contrast ratios (they are measured separately), and do NOT give \
+     an overall score.\n\n\
+     Respond with ONLY this JSON object:\n\
+     {\"scores\": {\"craft\": 0.0, \"distinctiveness\": 0.0, \"fitness\": 0.0, \
+     \"coherence\": 0.0}, \"notes\": {\"craft\": \"...\", \"distinctiveness\": \
+     \"...\", \"fitness\": \"...\", \"coherence\": \"...\"}}"
+        .to_string()
+}
+
+fn judge_user_prompt(brief: &str, d: &Direction, ordered: &[(String, String)]) -> String {
+    let slots = ["bg", "surface", "accent", "text", "muted"];
+    let palette = slots
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("{s}={}", d.palette.get(i).map(String::as_str).unwrap_or("?")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut out = format!(
+        "Brief: {brief}\n\nDirection: \"{}\" — {}\nPalette: {palette}\nTypography: {}\nMood: {}\n",
+        d.name, d.description, d.typography, d.mood
+    );
+    for (label, html) in ordered {
+        out.push_str(&format!("\n─── state \"{label}\" ───\n{html}\n"));
+    }
+    out
+}
+
+/// Read one 0–1 score, clamped. A missing dimension fails the judge — a
+/// four-dimension rubric with three answers is not a partial success.
+fn read_score(scores: &serde_json::Value, key: &str) -> Result<f64, String> {
+    scores
+        .get(key)
+        .and_then(|v| v.as_f64())
+        .map(|v| v.clamp(0.0, 1.0))
+        .ok_or_else(|| format!("judge returned no numeric \"{key}\" score"))
+}
+
+fn read_note(notes: &serde_json::Value, key: &str) -> String {
+    notes
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+// ── Computed facts ──────────────────────────────────────────────────────
+
+/// Parse `#rgb` / `#rrggbb` to bytes. Anything else — rgb(), named colours,
+/// alpha channels — is out of scope and the facts say so where it matters.
+fn parse_hex(hex: &str) -> Option<[u8; 3]> {
+    let h = hex.trim().trim_start_matches('#');
+    let expand = |s: &str| -> Option<Vec<u8>> {
+        s.chars()
+            .map(|c| c.to_digit(16).map(|d| (d * 17) as u8))
+            .collect()
+    };
+    match h.len() {
+        3 => expand(h).map(|v| [v[0], v[1], v[2]]),
+        6 => {
+            let bytes = (0..3)
+                .map(|i| u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).ok())
+                .collect::<Option<Vec<u8>>>()?;
+            Some([bytes[0], bytes[1], bytes[2]])
+        }
+        _ => None,
+    }
+}
+
+/// WCAG 2.x relative luminance → contrast ratio, 1.0–21.0. 4.5:1 is the AA
+/// floor for body text. Arithmetic, not judgment — which is why it is a fact.
+fn contrast_ratio(a: &str, b: &str) -> Option<f64> {
+    fn luminance(rgb: [u8; 3]) -> f64 {
+        let lin = |c: u8| {
+            let c = c as f64 / 255.0;
+            if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2])
+    }
+    let (la, lb) = (luminance(parse_hex(a)?), luminance(parse_hex(b)?));
+    let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+    Some(((hi + 0.05) / (lo + 0.05) * 100.0).round() / 100.0)
+}
+
+/// Every 6-char-normalized hex colour in the markup, with occurrence counts.
+fn hex_occurrences(html: &str) -> std::collections::HashMap<String, u32> {
+    let mut out: std::collections::HashMap<String, u32> = Default::default();
+    let bytes = html.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'#' {
+            let run: String = html[i + 1..]
+                .chars()
+                .take_while(|c| c.is_ascii_hexdigit())
+                .take(8)
+                .collect();
+            let key = match run.len() {
+                3 => Some(run.chars().flat_map(|c| [c, c]).collect::<String>()),
+                6 | 8 => Some(run[..6].to_string()),
+                _ => None,
+            };
+            if let Some(k) = key {
+                *out.entry(k.to_lowercase()).or_insert(0) += 1;
+            }
+            i += 1 + run.len();
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+fn compute_facts(direction: &Direction, artboards: &[(String, String)]) -> Facts {
+    let p = |i: usize| direction.palette.get(i).map(String::as_str).unwrap_or("");
+    let (bg, surface, accent, text, muted) = (p(0), p(1), p(2), p(3), p(4));
+
+    let all_html: String = artboards.iter().map(|(_, h)| h.as_str()).collect();
+    let seen = hex_occurrences(&all_html);
+    let declared: Vec<String> = direction
+        .palette
+        .iter()
+        .filter_map(|h| parse_hex(h).map(|[r, g, b]| format!("{r:02x}{g:02x}{b:02x}")))
+        .collect();
+
+    let declared_used = declared.iter().filter(|d| seen.contains_key(*d)).count() as u32;
+    let foreign_colours = seen.keys().filter(|k| !declared.contains(k)).count() as u32;
+    let total: u32 = seen.values().sum();
+    let declared_hits: u32 = declared.iter().filter_map(|d| seen.get(d)).sum();
+    let adherence = if total == 0 {
+        0.0
+    } else {
+        (declared_hits as f64 / total as f64 * 100.0).round() / 100.0
+    };
+
+    // First family of each declared stack ("Georgia, serif / system-ui, …" →
+    // Georgia, system-ui), checked case-insensitively against the CSS.
+    let lower = all_html.to_lowercase();
+    let fonts_declared_used = direction
+        .typography
+        .split('/')
+        .filter_map(|half| half.split(',').next())
+        .map(|f| f.trim().trim_matches(|c| c == '"' || c == '\'').to_lowercase())
+        .filter(|f| !f.is_empty())
+        .all(|f| lower.contains(&f));
+
+    // The required xmlns URI is `xmlns="http…"` — none of these needles match
+    // it, so compliant documents pass without an exemption list.
+    let external_free = !["src=\"http", "src='http", "href=\"http", "href='http", "url(http"]
+        .iter()
+        .any(|needle| lower.contains(needle));
+
+    Facts {
+        contrast: ContrastFacts {
+            text_on_bg: contrast_ratio(text, bg),
+            text_on_surface: contrast_ratio(text, surface),
+            muted_on_bg: contrast_ratio(muted, bg),
+            accent_on_bg: contrast_ratio(accent, bg),
+        },
+        palette: PaletteFacts { declared_used, foreign_colours, adherence },
+        fonts_declared_used,
+        javascript_free: !lower.contains("<script"),
+        external_free,
+    }
+}
+
+#[cfg(test)]
+mod facts_tests {
+    use super::*;
+
+    #[test]
+    fn contrast_hits_wcag_reference_points() {
+        // Black on white is the definitional maximum.
+        assert_eq!(contrast_ratio("#000000", "#ffffff"), Some(21.0));
+        // Same colour is the definitional minimum.
+        assert_eq!(contrast_ratio("#ffffff", "#ffffff"), Some(1.0));
+        // #767676 on white is the canonical "just passes AA" grey (~4.54).
+        let aa = contrast_ratio("#767676", "#ffffff").unwrap();
+        assert!((4.4..4.7).contains(&aa), "got {aa}");
+        // Order must not matter.
+        assert_eq!(
+            contrast_ratio("#123456", "#fedcba"),
+            contrast_ratio("#fedcba", "#123456")
+        );
+        // 3-char shorthand expands.
+        assert_eq!(contrast_ratio("#000", "#fff"), Some(21.0));
+        // Garbage is None, not a wrong number.
+        assert_eq!(contrast_ratio("plaid", "#ffffff"), None);
+    }
+
+    #[test]
+    fn hex_occurrences_normalizes_and_counts() {
+        let html = r##"<style>body{background:#FDF6E3;color:#2b2a26}.a{color:#fdf6e3}
+                       .b{border-color:#ABC}.c{outline:#aabbcc80}</style>"##;
+        let seen = hex_occurrences(html);
+        assert_eq!(seen.get("fdf6e3"), Some(&2)); // case-folded, counted
+        assert_eq!(seen.get("2b2a26"), Some(&1));
+        assert_eq!(seen.get("aabbcc"), Some(&2)); // #ABC expands; #aabbcc80 drops alpha
+    }
+
+    #[test]
+    fn palette_facts_measure_drift() {
+        let direction = Direction {
+            name: "t".into(),
+            description: String::new(),
+            palette: ["#111111", "#222222", "#333333", "#444444", "#555555"]
+                .map(String::from)
+                .to_vec(),
+            typography: "Georgia, serif / system-ui, sans-serif".into(),
+            mood: String::new(),
+        };
+        let html = "<style>a{color:#111111}b{color:#111111}c{color:#999999}\
+                    d{font-family:Georgia,serif}e{font-family:system-ui}</style>";
+        let facts = compute_facts(&direction, &[("s".into(), html.into())]);
+        assert_eq!(facts.palette.declared_used, 1); // only #111111 appears
+        assert_eq!(facts.palette.foreign_colours, 1); // #999999
+        assert!((facts.palette.adherence - 0.67).abs() < 0.01); // 2 of 3 occurrences
+        assert!(facts.fonts_declared_used);
+        assert!(facts.javascript_free);
+        assert!(facts.external_free);
+    }
+
+    #[test]
+    fn external_and_script_detection() {
+        let dirty = r#"<script>x()</script><img src="https://cdn.example/x.png"/>"#;
+        let d = Direction {
+            name: "t".into(),
+            description: String::new(),
+            palette: vec!["#000000".into(); 5],
+            typography: "serif".into(),
+            mood: String::new(),
+        };
+        let facts = compute_facts(&d, &[("s".into(), dirty.into())]);
+        assert!(!facts.javascript_free);
+        assert!(!facts.external_free);
+        // The mandatory xmlns URI must NOT trip the external check.
+        let clean = r#"<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>"#;
+        let facts = compute_facts(&d, &[("s".into(), clean.into())]);
+        assert!(facts.external_free);
+    }
+
+    #[test]
+    fn scores_are_clamped_and_required() {
+        let v: serde_json::Value =
+            serde_json::json!({ "craft": 1.7, "fitness": -0.2, "coherence": "high" });
+        assert_eq!(read_score(&v, "craft"), Ok(1.0));
+        assert_eq!(read_score(&v, "fitness"), Ok(0.0));
+        assert!(read_score(&v, "coherence").is_err()); // string is not a score
+        assert!(read_score(&v, "distinctiveness").is_err()); // absent fails loudly
+    }
+}
+
 // ── The plugin ──────────────────────────────────────────────────────────
 
-/// Whatever the tools need. Every tool receives `&Self`. Phosphene's tools
-/// hold nothing between calls — each spawns an agent and returns what it said
-/// — so this is empty, and the served set never changes.
+/// What `render_state` cached for one direction, for `score_direction` to
+/// read. ~9 KB per artboard cannot ride back through the orchestrating
+/// agent's context — it would have to echo ~27 KB verbatim into tool
+/// arguments, which is expensive and which models get wrong.
+struct CachedDirection {
+    direction: Direction,
+    /// The full state list, in order — artboards are presented to the judge
+    /// in THIS order regardless of render order.
+    states: Vec<String>,
+    /// label → rendered document.
+    artboards: std::collections::HashMap<String, String>,
+}
+
+/// Every tool receives `&Self`. The one thing held between calls is the
+/// artboard cache. An in-process map is CORRECT scoping, not a shortcut: the
+/// daemon materializes this plugin as an ephemeral container per response id
+/// — one agent run, one container, evaporating when the connection drops
+/// (docs/platform/05-agent-identity.md §3) — so the process lifetime IS the
+/// run lifetime. If containers are ever recycled across runs, the fallback is
+/// postgres, which means reversing our `mcp.postgres: false` deviation with
+/// that as the written reason.
+///
+/// std Mutex, not tokio: no `.await` ever happens while it is held.
 #[derive(Clone)]
-struct Plugin;
+struct Plugin {
+    boards: Arc<std::sync::Mutex<std::collections::HashMap<u32, CachedDirection>>>,
+}
+
+impl Plugin {
+    fn new() -> Self {
+        Self {
+            boards: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+}
 
 #[rmcp::tool_router]
 impl Plugin {
@@ -778,10 +1199,136 @@ impl Plugin {
         .await?;
 
         let html = extract_html(&text, label).map_err(internal)?;
+
+        // Cache for score_direction — the document must not have to ride back
+        // through the agent's context to be judged.
+        {
+            let mut boards = self.boards.lock().expect("boards mutex poisoned");
+            let entry = boards
+                .entry(args.direction_index)
+                .or_insert_with(|| CachedDirection {
+                    direction: args.direction.clone(),
+                    states: states.clone(),
+                    artboards: Default::default(),
+                });
+            entry.artboards.insert(label.to_string(), html.clone());
+        }
+
         Ok(Json(Rendered {
             label: label.to_string(),
             html,
         }))
+    }
+
+    #[rmcp::tool(
+        description = "Score ONE rendered direction with ONE judge model, on four \
+                       dimensions: craft, distinctiveness, fitness to brief, and \
+                       coherence across states. Returns four separate 0-1 scores \
+                       (deliberately no overall), a written why per dimension, and \
+                       computed facts (WCAG contrast, palette adherence). The \
+                       direction's states must have been rendered via render_state \
+                       IN THIS RUN — the artboards are cached plugin-side, never \
+                       passed as arguments. `model` is required: you choose the \
+                       jury. Call once per judge with genuinely DIFFERENT models — \
+                       the spread between judges is the signal, so never average \
+                       their scores and never hide their disagreement."
+    )]
+    async fn score_direction(
+        &self,
+        Parameters(args): Parameters<ScoreArgs>,
+    ) -> Result<Json<ScoreResult>, rmcp::ErrorData> {
+        let model = args.model.trim();
+        if model.is_empty() {
+            return Err(internal(
+                "model is required — the agent picks the jury, phosphene owns only the rubric",
+            ));
+        }
+        let upstream = match args.upstream.as_deref() {
+            None | Some("openrouter") => Upstream::OpenRouter,
+            Some("claude_agent_sdk") => Upstream::ClaudeAgentSdk,
+            Some(other) => {
+                return Err(internal(format!(
+                    "unknown upstream \"{other}\" — valid: openrouter, claude_agent_sdk"
+                )));
+            }
+        };
+
+        // Read everything needed out of the cache, then DROP the lock before
+        // the await below — a std::sync::Mutex may never be held across one.
+        let (direction, ordered) = {
+            let boards = self.boards.lock().expect("boards mutex poisoned");
+            let Some(cached) = boards.get(&args.direction_index) else {
+                let have: Vec<u32> = boards.keys().copied().collect();
+                return Err(internal(format!(
+                    "no artboards cached for direction {} — call render_state first \
+                     (in this same run; the cache does not outlive the agent). \
+                     Cached direction indices: {have:?}",
+                    args.direction_index
+                )));
+            };
+            // Present states in invention order, not render order, and record
+            // exactly what the judge saw.
+            let ordered: Vec<(String, String)> = cached
+                .states
+                .iter()
+                .filter_map(|label| {
+                    cached
+                        .artboards
+                        .get(label)
+                        .map(|html| (label.clone(), html.clone()))
+                })
+                .collect();
+            if ordered.is_empty() {
+                return Err(internal(format!(
+                    "direction {} is cached but has no rendered states",
+                    args.direction_index
+                )));
+            }
+            (cached.direction.clone(), ordered)
+        };
+
+        let text = run_agent(
+            &judge_system_prompt(),
+            &judge_user_prompt(args.brief.trim(), &direction, &ordered),
+            upstream,
+            model,
+            // Judging benefits from deliberation; on claude judges this is the
+            // same lever that fixed generation's space budgeting.
+            true,
+            // Low temperature on openrouter judges: the rubric wants a careful
+            // read, not creative variance — the panel's diversity comes from
+            // MODELS, not sampling.
+            0.2,
+            3000,
+            SCORE_TIMEOUT,
+        )
+        .await?;
+
+        let parsed = parse_json_loose(&text).map_err(internal)?;
+        let scores = parsed
+            .get("scores")
+            .ok_or_else(|| internal("judge returned no \"scores\" object"))?;
+        let notes = parsed.get("notes").cloned().unwrap_or_default();
+
+        let result = ScoreResult {
+            direction: direction.name.clone(),
+            judge: model.to_string(),
+            scores: Scores {
+                craft: read_score(scores, "craft").map_err(internal)?,
+                distinctiveness: read_score(scores, "distinctiveness").map_err(internal)?,
+                fitness: read_score(scores, "fitness").map_err(internal)?,
+                coherence: read_score(scores, "coherence").map_err(internal)?,
+            },
+            notes: Notes {
+                craft: read_note(&notes, "craft"),
+                distinctiveness: read_note(&notes, "distinctiveness"),
+                fitness: read_note(&notes, "fitness"),
+                coherence: read_note(&notes, "coherence"),
+            },
+            facts: compute_facts(&direction, &ordered),
+            states_seen: ordered.iter().map(|(l, _)| l.clone()).collect(),
+        };
+        Ok(Json(result))
     }
 }
 
@@ -794,15 +1341,19 @@ async fn main() -> Result<Infallible, std::io::Error> {
         objectiveai_mcp_plugin_framework::config::Config::new(PORT, NAME, VERSION)
             .with_description("Design iteration and judgment.")
             .with_instructions(
-                "Explore a design brief visually. Call invent_directions ONCE to get 3 \
+                "Explore a design brief visually, then judge it. Call \
+                 invent_directions ONCE to get 3 \
                  contrasting directions and 3 shared states. Then, for each direction, \
                  call render_state for the FIRST state with no anchor_html, and pass \
                  the HTML it returns as anchor_html when rendering that direction's \
                  remaining states. Directions are independent — render them in \
                  parallel. Return the documents as they come back; a human is looking \
-                 at them.",
+                 at them. To judge, call score_direction once per (direction x \
+                 judge model) — you and your human choose the judges; pick models \
+                 that genuinely differ, report every judge's scores separately, \
+                 and NEVER average across judges: the disagreement is the point.",
             ),
-        Plugin,
+        Plugin::new(),
         tools,
     )
     .await

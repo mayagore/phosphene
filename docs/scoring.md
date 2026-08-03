@@ -87,7 +87,7 @@ These print **beside** the scores as facts, and are not part of any score:
 | Fact | How |
 |---|---|
 | **WCAG contrast ratios** | bg/text, surface/text, accent/on-accent, from the declared palette |
-| **Frame fit** | content height vs 720, plus any internally clipped region — the harness built on 2026-08-03 already does this |
+| **Frame fit** | content height vs 720, plus any internally clipped region. Needs layout, so it is computed **viewer-side** where the artboards already render in iframes — the plugin container has no browser. The other facts are computed in the tool. |
 | **Palette adherence** | are the five declared hexes the ones the document actually uses, or did it drift? |
 | **Font adherence** | does the CSS use the declared stack? |
 | **Contract compliance** | no external resources, no JavaScript, valid XHTML |
