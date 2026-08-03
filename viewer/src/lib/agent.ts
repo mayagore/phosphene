@@ -15,12 +15,39 @@ import { agentsSpawnExecuteStreaming, type CommandExecutor } from "@objectiveai/
 /** Cheap and reliable at structured output. Tunable — quality work later. */
 export const DEFAULT_MODEL = "openai/gpt-4o-mini";
 
+/**
+ * Which upstream runs the completion.
+ *
+ * `claude_agent_sdk` runs on the machine's own Claude Code login — no key, BYOK
+ * explicitly rejected — and reports ZERO cost and ZERO tokens through
+ * ObjectiveAI. Measured 2026-08-03 on a real artboard: 9,280 chars in 33s at
+ * no charge, against 6,179 chars for the same direction and state on
+ * openrouter. Denser output, free.
+ *
+ * The trade: no token metering on that path either, so a spend ceiling cannot
+ * be enforced from usage. And it needs a live `claude` login — when the OAuth
+ * token lapses ObjectiveAI reports it as the nonsense string "Claude Code
+ * returned an error result: success" (it surfaces the SDK's `subtype` rather
+ * than its 401).
+ */
+export type Upstream = "openrouter" | "claude_agent_sdk";
+
 export interface AgentRun {
   system: string;
   user: string;
+  upstream?: Upstream;
   model?: string;
+  /** openrouter only — the field does not exist on claude_agent_sdk. */
   temperature?: number;
+  /** openrouter only — the field does not exist on claude_agent_sdk. */
   maxTokens?: number;
+  /**
+   * claude_agent_sdk only. Defaults to OFF, because thinking tokens are drawn
+   * from the same budget as output and that is precisely what hit the legacy
+   * app's 32K ceiling — and this upstream has no `max_tokens` to raise instead.
+   * Turn it on where the task needs deliberation more than length.
+   */
+  thinking?: boolean;
   /** Hard ceiling handed to the daemon. */
   timeoutSeconds?: number;
   /**
@@ -85,11 +112,32 @@ export async function runAgent(
   signal?: AbortFlag,
 ): Promise<string> {
   const stallMs = (run.stallSeconds ?? 120) * 1000;
-  const request = {
-    agent: {
-      by: "ref",
-      agent: {
-        Resolved: {
+
+  // The two upstreams take DIFFERENT specs, and getting it wrong is silent:
+  // the agent union is untagged with no `deny_unknown_fields`, so a stray
+  // `temperature` on a claude_agent_sdk agent is dropped with no error — and
+  // since the agent id hashes the normalized struct, there is no signal at
+  // all. Hence one branch per upstream rather than a shared object.
+  const resolved =
+    run.upstream === "claude_agent_sdk"
+      ? {
+          upstream: "claude_agent_sdk",
+          // A short alias, not a dated model id — the runner passes it
+          // straight to the local `claude` binary, and a dated id was
+          // measured failing where "sonnet" resolved.
+          model: run.model ?? "sonnet",
+          // Required, and the only legal value. Documented as ignored for
+          // agent completions, but omitting it fails deserialization.
+          output_mode: "instruction",
+          // The ONLY lever on the 32K output ceiling, and thinking tokens are
+          // exactly what consumed the legacy app's output budget. There is no
+          // `max_tokens` on this upstream to raise instead.
+          thinking: run.thinking ?? false,
+          plugins: run.plugins ?? [],
+          // A bare string here. NOT {role, content} — that is openrouter's shape.
+          system_prompt: run.system,
+        }
+      : {
           upstream: "openrouter",
           model: run.model ?? DEFAULT_MODEL,
           temperature: run.temperature ?? 0.9,
@@ -100,9 +148,10 @@ export async function runAgent(
           // whole agent union and points nowhere useful. Role is
           // "system" | "developer" (agent.openrouter.SystemPromptRole).
           system_prompt: { role: "system", content: run.system },
-        },
-      },
-    },
+        };
+
+  const request = {
+    agent: { by: "ref", agent: { Resolved: resolved } },
     message: { Simple: run.user },
     timeout_seconds: run.timeoutSeconds ?? 180,
   };

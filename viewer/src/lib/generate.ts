@@ -41,8 +41,33 @@ export const ARTBOARD_HEIGHT = 720;
  * i.e. not at all. `anthropic/claude-sonnet-4.5` on the same prompt returned
  * 5.3 KB with real furniture. Invention is a paragraph of JSON and stays cheap;
  * this step is the one the whole product is judged on.
+ *
+ * Then measured again on 2026-08-03, same direction and state, upstream the
+ * only variable: `claude_agent_sdk` returned **9,280 chars in 33s at zero
+ * reported cost**, against 6,179 chars on openrouter. It runs on the machine's
+ * own Claude Code login, so it is denser AND free. `thinking: false` keeps the
+ * 32K ceiling away — there is no `max_tokens` on that upstream to raise.
  */
-export const GENERATION_MODEL = "anthropic/claude-sonnet-4.5";
+export const GENERATION_UPSTREAM = "claude_agent_sdk" as const;
+export const GENERATION_MODEL = "sonnet";
+/**
+ * ON, and this reverses the default in `AgentRun.thinking`.
+ *
+ * Thinking was disabled here first, to stay clear of the 32K ceiling. Wrong
+ * call: at ~10 KB of HTML we are nowhere near it, and deliberation is exactly
+ * what makes a model budget vertical space. Same brief, same directions, four
+ * configurations, counting cells whose content falls off the 400×720 frame or
+ * is clipped inside it:
+ *
+ *   openrouter                       0 overflow · 3 clipped (183px) · 6/9 clean
+ *   openrouter + flex-column prompt  0 overflow · 7 clipped (291px) · 2/9 clean
+ *   claude_agent_sdk, thinking off   3 overflow (worst 1439px)      · 5/9 clean
+ *   claude_agent_sdk, thinking ON    0 overflow · 1 clipped (46px)  · 8/9 clean
+ *
+ * The cost is wall-clock — 121s for nine cells against 79s — and nothing else,
+ * since this upstream reports no tokens and no charge.
+ */
+export const GENERATION_THINKING = true;
 
 const SLOT_NAMES = ["bg", "surface", "accent", "text", "muted"];
 
@@ -155,11 +180,13 @@ export async function generateState(
     {
       system: systemPrompt(states, label, anchorHtml),
       user: directionPrompt(direction, label),
+      upstream: GENERATION_UPSTREAM,
       model: GENERATION_MODEL,
-      // Lower than invention's 0.9: the direction is already pinned, and this
-      // step should execute the spec rather than reinterpret it.
-      temperature: 0.7,
-      maxTokens: 8000,
+      thinking: GENERATION_THINKING,
+      // NOTE: no `temperature` or `maxTokens`. Neither field exists on
+      // claude_agent_sdk, and passing them is silently ignored rather than
+      // rejected — so they are omitted deliberately rather than left to be
+      // mistaken for settings that apply.
       // Every outer layer strictly outlasts every inner one (docs/legacy §5).
       timeoutSeconds: 600,
       stallSeconds: 120,

@@ -50,6 +50,22 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const ARTBOARD_WIDTH: u32 = 400;
 const ARTBOARD_HEIGHT: u32 = 720;
 
+/// Which upstream runs a completion. They take different specs, and mixing
+/// them is silent rather than an error — see `run_agent`.
+#[derive(Clone, Copy)]
+enum Upstream {
+    OpenRouter,
+    /// Runs on the machine's own Claude Code login. No key, and BYOK is
+    /// rejected outright. Reports ZERO cost and ZERO tokens through
+    /// ObjectiveAI — measured 2026-08-03 on a real artboard: 9,280 chars in
+    /// 33s at no charge, against 6,179 for the same direction and state on
+    /// openrouter. Denser and free. The trade is no token metering either, so
+    /// a spend ceiling cannot be enforced from usage; and it needs a live
+    /// `claude` login, whose lapse ObjectiveAI reports as the nonsense string
+    /// "Claude Code returned an error result: success".
+    ClaudeAgentSdk,
+}
+
 /// Invention is a paragraph of JSON, so it stays cheap.
 const INVENTION_MODEL: &str = "openai/gpt-4o-mini";
 
@@ -60,7 +76,30 @@ const INVENTION_MODEL: &str = "openai/gpt-4o-mini";
 /// placeholder: one centred card, one heading, one button. Adding an explicit
 /// density clause to the prompt moved it to 1.57 KB, i.e. not at all.
 /// `claude-sonnet-4.5` on the same prompt returned 5.3 KB with real furniture.
-const GENERATION_MODEL: &str = "anthropic/claude-sonnet-4.5";
+///
+/// Then measured again on 2026-08-03 with the upstream as the only variable:
+/// `claude_agent_sdk` returned 9,280 chars in 33s at zero reported cost,
+/// against 6,179 on openrouter for the same direction and state. Denser AND
+/// free, because it runs on the machine's own Claude Code login.
+const GENERATION_UPSTREAM: Upstream = Upstream::ClaudeAgentSdk;
+const GENERATION_MODEL: &str = "sonnet";
+
+/// Thinking ON for generation, which is the opposite of the first instinct.
+///
+/// It was disabled first, to stay clear of the 32K ceiling. Wrong call: at
+/// ~10 KB of HTML we are nowhere near it, and deliberation is exactly what
+/// makes a model budget vertical space. Same brief, same directions, four
+/// configurations, counting cells whose content falls off the 400×720 frame or
+/// is clipped inside it:
+///
+///   openrouter                      0 overflow · 3 clipped (183px) · 6/9 clean
+///   openrouter + flex-column prompt 0 overflow · 7 clipped (291px) · 2/9 clean
+///   claude_agent_sdk, thinking off  3 overflow (worst 1439px)      · 5/9 clean
+///   claude_agent_sdk, thinking ON   0 overflow · 1 clipped (46px)  · 8/9 clean
+///
+/// The cost is wall-clock — 121s for nine cells against 79s — and nothing
+/// else, since this upstream reports no tokens and no charge.
+const GENERATION_THINKING: bool = true;
 
 /// Hang detection belongs on the GAP BETWEEN CHUNKS, not on total duration.
 /// The legacy app spent seven commits learning this: a healthy generation
@@ -253,7 +292,9 @@ fn internal(message: impl Into<String>) -> rmcp::ErrorData {
 async fn run_agent(
     system: &str,
     user: &str,
+    upstream: Upstream,
     model: &str,
+    thinking: bool,
     temperature: f64,
     max_tokens: u32,
     timeout: Duration,
@@ -261,16 +302,39 @@ async fn run_agent(
     // Built as JSON rather than by hand. The resolved-agent type is a deep
     // untagged enum whose mis-construction fails with an error naming the
     // whole union and pointing nowhere useful — and THIS JSON is the exact
-    // shape already proven against a live daemon. Note `system_prompt` is
-    // {role, content}; a bare string does not deserialize.
-    let spec = serde_json::json!({
-        "upstream": "openrouter",
-        "model": model,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "plugins": [],
-        "system_prompt": { "role": "system", "content": system },
-    });
+    // shape already proven against a live daemon.
+    //
+    // The two upstreams take DIFFERENT specs and getting it wrong is SILENT:
+    // there is no `deny_unknown_fields`, so a stray `temperature` on a
+    // claude_agent_sdk agent is dropped with no error, and since the agent id
+    // hashes the normalized struct there is no signal at all.
+    let spec = match upstream {
+        Upstream::ClaudeAgentSdk => serde_json::json!({
+            "upstream": "claude_agent_sdk",
+            // A short alias, not a dated model id — the runner hands it
+            // straight to the local `claude` binary.
+            "model": model,
+            // Required, and the only legal value.
+            "output_mode": "instruction",
+            // The ONLY lever on the 32K output ceiling: thinking tokens are
+            // what consumed the legacy app's budget, and this upstream has no
+            // `max_tokens` to raise instead.
+            "thinking": thinking,
+            "plugins": [],
+            // A bare string. NOT {role, content} — that is openrouter's shape.
+            "system_prompt": system,
+        }),
+        Upstream::OpenRouter => serde_json::json!({
+            "upstream": "openrouter",
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "plugins": [],
+            // `system_prompt` is {role, content} here; a bare string does not
+            // deserialize.
+            "system_prompt": { "role": "system", "content": system },
+        }),
+    };
     let spec = serde_json::from_value(spec)
         .map_err(|error| internal(format!("agent spec did not deserialize: {error}")))?;
 
@@ -632,7 +696,10 @@ impl Plugin {
         let text = run_agent(
             INVENT_PROMPT,
             brief,
+            Upstream::OpenRouter,
             INVENTION_MODEL,
+            // Ignored on openrouter; the field does not exist there.
+            false,
             // High, deliberately: this step is asked for contrast.
             0.9,
             2000,
@@ -697,9 +764,13 @@ impl Plugin {
         let text = run_agent(
             &render_system_prompt(&states, label, args.anchor_html.as_deref()),
             &user,
+            GENERATION_UPSTREAM,
             GENERATION_MODEL,
-            // Lower than invention's 0.9: the direction is already pinned, and
-            // this step should execute the spec rather than reinterpret it.
+            GENERATION_THINKING,
+            // Both ignored on claude_agent_sdk — those fields do not exist
+            // there. Kept for the openrouter branch, where 0.7 is lower than
+            // invention's 0.9 because the direction is already pinned and this
+            // step should execute the spec rather than reinterpret it.
             0.7,
             8000,
             RENDER_TIMEOUT,
