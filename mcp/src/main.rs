@@ -600,7 +600,11 @@ fn parse_json_loose(text: &str) -> Result<serde_json::Value, String> {
             }
         }
     }
-    Err("unterminated JSON in the model's response".to_string())
+    let tail: String = trimmed.chars().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect();
+    Err(format!(
+        "unterminated JSON in the model's response (likely truncated by the \
+         token budget) — ends: …{tail}"
+    ))
 }
 
 /// Parse, and if that fails, parse again with trailing commas removed.
@@ -1299,7 +1303,11 @@ impl Plugin {
             // read, not creative variance — the panel's diversity comes from
             // MODELS, not sampling.
             0.2,
-            3000,
+            // Generous, deliberately: on reasoning models (gemini-2.5-pro
+            // measured) thinking tokens draw from THIS budget, and 3000 was
+            // truncating replies mid-JSON — "unterminated JSON", 29 retries,
+            // a 25-minute loop. The legacy 32K lesson, still collecting rent.
+            16000,
             SCORE_TIMEOUT,
         )
         .await?;
