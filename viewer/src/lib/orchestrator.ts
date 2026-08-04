@@ -187,13 +187,13 @@ export async function explore(
     {
       system: explorePrompt(explorationId),
       user: `Brief: ${brief}`,
-      // The orchestrator routes and reports; the design judgement happens
-      // inside the tools. Cheap and near-deterministic is right.
-      model: "openai/gpt-4o-mini",
-      temperature: 0.1,
-      // ~12 small tool calls plus a short summary. Arguments are indices and
-      // labels — the cache keeps documents out of this budget entirely.
-      maxTokens: 6000,
+      // Claude as orchestrator, probed 2026-08-04: followed a two-call
+      // instruction exactly and STOPPED — the termination discipline mini
+      // failed three times (5/9 underrun, the 29-call retry loop, the
+      // non-terminating verify churn). Free on the subscription; thinking
+      // off because this role routes rather than deliberates.
+      upstream: "claude_agent_sdk",
+      thinking: false,
       plugins: [{ ...PHOSPHENE_PLUGIN }],
       // Nine sequential renders at ~40-60s each is the honest baseline, plus
       // a cold image build on first run. Stall covers the longest single
@@ -233,9 +233,9 @@ export async function refine(
     {
       system: refinePrompt(explorationId, directionNames, states),
       user: `Feedback: ${feedback}`,
-      model: "openai/gpt-4o-mini",
-      temperature: 0.1,
-      maxTokens: 4000,
+      // Same probe-backed choice as explore — see the note there.
+      upstream: "claude_agent_sdk",
+      thinking: false,
       plugins: [{ ...PHOSPHENE_PLUGIN }],
       // At most 9 revisions at ~40-60s each, sequential.
       timeoutSeconds: 1200,
@@ -264,9 +264,9 @@ export async function resume(
     {
       system: resumePrompt(explorationId),
       user: "Replay the exploration.",
-      model: "openai/gpt-4o-mini",
-      temperature: 0,
-      maxTokens: 3000,
+      // Same probe-backed choice as explore — see the note there.
+      upstream: "claude_agent_sdk",
+      thinking: false,
       plugins: [{ ...PHOSPHENE_PLUGIN }],
       timeoutSeconds: 300,
       stallSeconds: 120,
