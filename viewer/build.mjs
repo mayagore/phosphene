@@ -73,6 +73,21 @@ const styles = {
   outfile: "dist/phosphene.css",
 };
 
+// The tab-strip icon: a verbatim asset, copied — but only when its BYTES
+// change. An unconditional copy rewrites the mtime every build, and the
+// viewer's dev watcher treats >1 changed file as its most expensive reload
+// rung (the same trap the styles pass documents above).
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+function copyIcon() {
+  mkdirSync("dist", { recursive: true });
+  const src = "src/icon.svg";
+  const out = "dist/icon.svg";
+  if (!existsSync(out) || !readFileSync(src).equals(readFileSync(out))) {
+    copyFileSync(src, out);
+  }
+}
+copyIcon();
+
 if (watch) {
   const [js, css] = await Promise.all([context(tabs), context(styles)]);
   await Promise.all([js.watch(), css.watch()]);

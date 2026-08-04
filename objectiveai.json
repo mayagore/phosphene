@@ -26,6 +26,7 @@
     ],
     "development": {
       "output": "viewer/dist"
-    }
+    },
+    "icon": "./icon.svg"
   }
 }
