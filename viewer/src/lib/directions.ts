@@ -15,6 +15,11 @@ export interface Direction {
   palette: string[];
   typography: string;
   mood: string;
+  /** Moodboard fields — optional; pre-2026-08-04 explorations lack them. */
+  voice?: string;
+  texture?: string;
+  motifs?: string;
+  audience?: string;
 }
 
 export interface Invention {
@@ -44,6 +49,10 @@ function normalizeDirection(raw: unknown, index: number): Direction {
     palette: palette.length === 5 ? palette : FALLBACK_PALETTE,
     typography: typeof d.typography === "string" ? d.typography : "system-ui, sans-serif",
     mood: typeof d.mood === "string" ? d.mood : "",
+    voice: typeof d.voice === "string" && d.voice.trim() ? d.voice : undefined,
+    texture: typeof d.texture === "string" && d.texture.trim() ? d.texture : undefined,
+    motifs: typeof d.motifs === "string" && d.motifs.trim() ? d.motifs : undefined,
+    audience: typeof d.audience === "string" && d.audience.trim() ? d.audience : undefined,
   };
 }
 

@@ -370,6 +370,31 @@
 .ph-mini-line { height: 4px; border-radius: 2px; opacity: 0.85; }
 .ph-mini-cta { height: 9px; width: 34%; border-radius: 2px; margin-top: 3px; }
 
+.ph-moodboard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-1);
+  border-top: 1px solid var(--ph-color-border-subtle);
+  padding-top: var(--ph-spacing-2);
+}
+
+.ph-moodboard div {
+  display: flex;
+  gap: var(--ph-spacing-2);
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+}
+
+.ph-moodboard dt {
+  flex: none;
+  width: 56px;
+  text-transform: uppercase;
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  color: var(--ph-color-text-muted);
+}
+
+.ph-moodboard dd { color: var(--ph-color-text-secondary); }
+
 .ph-card-type {
   font-size: var(--ph-text-caption);
   color: var(--ph-color-text-muted);

@@ -166,6 +166,24 @@ function DirectionCard({ direction }: { direction: Direction }) {
         ))}
       </div>
       <p className="ph-card-desc">{direction.description}</p>
+      {/* The moodboard half of a direction — personality is INPUT, and the
+          card shows exactly what the renderer and judges were given. */}
+      {(direction.voice || direction.texture || direction.motifs || direction.audience) && (
+        <dl className="ph-moodboard">
+          {direction.voice && (
+            <div><dt>voice</dt><dd>{direction.voice}</dd></div>
+          )}
+          {direction.texture && (
+            <div><dt>texture</dt><dd>{direction.texture}</dd></div>
+          )}
+          {direction.motifs && (
+            <div><dt>motifs</dt><dd>{direction.motifs}</dd></div>
+          )}
+          {direction.audience && (
+            <div><dt>audience</dt><dd>{direction.audience}</dd></div>
+          )}
+        </dl>
+      )}
       <p className="ph-card-type">{direction.typography}</p>
     </article>
   );

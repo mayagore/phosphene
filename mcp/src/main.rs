@@ -142,8 +142,12 @@ For each direction provide:
 - name: Two-word evocative name (e.g. "Midnight Trust", "Paper Carnival")
 - description: 2-3 sentences on visual strategy and emotional target. What does the viewer feel? What design tradition does this reference?
 - palette: a JSON ARRAY of exactly 5 hex color strings in this order: background, surface, accent, text, muted — e.g. ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"]. Never an object. Background and text MUST have sufficient contrast for readability. Accent should be distinct from background.
-- typography: A system font stack for headings and body (e.g. "Georgia, serif / system-ui, sans-serif"). No Google Fonts or custom fonts — only fonts available without loading external resources. Choose stacks a working designer would ship today; novelty stacks (Comic Sans MS, Impact, Papyrus) only when the direction genuinely demands them.
+- typography: A system font stack for headings and body (e.g. "Georgia, serif / system-ui, sans-serif"). No Google Fonts or custom fonts — only fonts available without loading external resources. Choose stacks a working designer would ship today; novelty stacks (Comic Sans MS, Impact, Papyrus) only when the direction genuinely demands them. Describe what the type DOES (e.g. "high-contrast serif display over quiet grotesque body") rather than leaning on a brand-name face — named display faces are licensing landmines in real use.
 - mood: 2-3 word mood descriptor
+- voice: the copy tone this interface speaks in, with 1-2 example phrases in that voice — real UI copy, not description
+- texture: the direction's material language in CSS-ACHIEVABLE terms — gradients, grain, layered shadows, border treatments, repeating patterns. No images exist, so every texture must be drawable in CSS
+- motifs: the 2-3 repeatable marks that make this direction recognizable at a glance (e.g. "hairline double-rules, illuminated initial caps, wax-seal badges")
+- audience: one sentence on who this direction is FOR — their taste, their context
 
 Also provide "states": a JSON array of exactly 3 state names (views/screens/compositions) that make sense for this brief — a fintech app might get ["landing", "portfolio", "transactions"]; a concert poster might get ["announce", "lineup", "tickets"]. These are SHARED across all directions: every direction will render exactly these 3 states so they can be compared side by side. Do not default to "hero/dashboard/settings" unless those genuinely fit.
 
@@ -242,6 +246,21 @@ pub struct Direction {
     pub typography: String,
     /// 2-3 word mood descriptor.
     pub mood: String,
+    /// Copy voice: the tone the interface speaks in, with 1-2 example
+    /// phrases. Moodboard field — optional so pre-2026-08-04 stored
+    /// explorations still parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<String>,
+    /// Material and texture language, in CSS-achievable terms (gradients,
+    /// grain, layered shadows, border treatments, repeating patterns).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture: Option<String>,
+    /// The repeatable marks that make the direction recognizable at a glance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motifs: Option<String>,
+    /// Who this direction is for — feeds the fitness judges something real.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -750,6 +769,14 @@ fn extract_html(text: &str, label: &str) -> Result<String, String> {
 
 /// Normalize one direction, defaulting rather than failing — a malformed
 /// field should cost that field, not the whole run.
+fn opt_field(raw: &serde_json::Value, key: &str) -> Option<String> {
+    raw.get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
 fn normalize_direction(raw: &serde_json::Value, index: usize) -> Direction {
     const SLOTS: [&str; 5] = ["background", "surface", "accent", "text", "muted"];
     const FALLBACK: [&str; 5] = ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"];
@@ -790,7 +817,31 @@ fn normalize_direction(raw: &serde_json::Value, index: usize) -> Direction {
             None => "system-ui, sans-serif".to_string(),
         },
         mood: field("mood"),
+        voice: opt_field(raw, "voice"),
+        texture: opt_field(raw, "texture"),
+        motifs: opt_field(raw, "motifs"),
+        audience: opt_field(raw, "audience"),
     }
+}
+
+/// The moodboard lines, appended wherever a direction is described to a
+/// working model — render, refine, judge. Personality is INPUT: the renderer
+/// produces exactly as much of it as the direction carries.
+fn moodboard_lines(direction: &Direction) -> String {
+    let mut out = String::new();
+    if let Some(v) = &direction.voice {
+        out.push_str(&format!("\nVoice: {v}"));
+    }
+    if let Some(t) = &direction.texture {
+        out.push_str(&format!("\nTexture & materials (render these in CSS): {t}"));
+    }
+    if let Some(m) = &direction.motifs {
+        out.push_str(&format!("\nMotifs (repeat these marks): {m}"));
+    }
+    if let Some(a) = &direction.audience {
+        out.push_str(&format!("\nAudience: {a}"));
+    }
+    out
 }
 
 fn normalize_invention(parsed: &serde_json::Value) -> Result<Invention, String> {
@@ -878,8 +929,15 @@ fn judge_user_prompt(brief: &str, d: &Direction, ordered: &[(String, String)]) -
         .collect::<Vec<_>>()
         .join(", ");
     let mut out = format!(
-        "Brief: {brief}\n\nDirection: \"{}\" — {}\nPalette: {palette}\nTypography: {}\nMood: {}\n",
-        d.name, d.description, d.typography, d.mood
+        "Brief: {brief}\n\nDirection: \"{}\" — {}\nPalette: {palette}\nTypography: {}\nMood: {}{}\n",
+        d.name,
+        d.description,
+        d.typography,
+        d.mood,
+        // The judges see the same moodboard the renderer aimed for — audience
+        // gives fitness something real; texture and motifs give craft and
+        // distinctiveness a stated intent to hold the pixels against.
+        moodboard_lines(d),
     );
     for (label, html) in ordered {
         out.push_str(&format!("\n─── state \"{label}\" ───\n{html}\n"));
@@ -1068,6 +1126,10 @@ mod facts_tests {
                 .to_vec(),
             typography: "Georgia, serif / system-ui, sans-serif".into(),
             mood: String::new(),
+            voice: None,
+            texture: None,
+            motifs: None,
+            audience: None,
         };
         let html = "<style>a{color:#111111}b{color:#111111}c{color:#999999}\
                     d{font-family:Georgia,serif}e{font-family:system-ui}</style>";
@@ -1089,6 +1151,10 @@ mod facts_tests {
             palette: vec!["#000000".into(); 5],
             typography: "serif".into(),
             mood: String::new(),
+            voice: None,
+            texture: None,
+            motifs: None,
+            audience: None,
         };
         let facts = compute_facts(&d, &[("s".into(), dirty.into())]);
         assert!(!facts.javascript_free);
@@ -1280,9 +1346,13 @@ fn refine_user_prompt(
     feedback: &str,
 ) -> String {
     format!(
-        "Direction: \"{}\" — {}\nTypography: {}\nMood: {}\nState being revised: \
+        "Direction: \"{}\" — {}\nTypography: {}\nMood: {}{}\nState being revised: \
          \"{label}\"\n\nCURRENT DOCUMENT:\n{current}\n\nFEEDBACK TO APPLY:\n{feedback}",
-        direction.name, direction.description, direction.typography, direction.mood,
+        direction.name,
+        direction.description,
+        direction.typography,
+        direction.mood,
+        moodboard_lines(direction),
     )
 }
 
