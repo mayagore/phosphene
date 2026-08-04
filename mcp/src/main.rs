@@ -66,8 +66,14 @@ enum Upstream {
     ClaudeAgentSdk,
 }
 
-/// Invention is a paragraph of JSON, so it stays cheap.
-const INVENTION_MODEL: &str = "openai/gpt-4o-mini";
+/// Invention is the TASTE step — it picks the palettes and type stacks that
+/// everything downstream executes — so it runs on the same Claude login as
+/// generation rather than on a dated mini model whose aesthetic defaults
+/// (Comic Sans MS, Impact) kept surfacing in directions. Free either way on
+/// the subscription. Contrast between directions comes from the prompt;
+/// this upstream has no temperature to lean on.
+const INVENTION_UPSTREAM: Upstream = Upstream::ClaudeAgentSdk;
+const INVENTION_MODEL: &str = "sonnet";
 
 /// Generation is the step the whole product is judged on, so it does not.
 ///
@@ -134,7 +140,7 @@ For each direction provide:
 - name: Two-word evocative name (e.g. "Midnight Trust", "Paper Carnival")
 - description: 2-3 sentences on visual strategy and emotional target. What does the viewer feel? What design tradition does this reference?
 - palette: a JSON ARRAY of exactly 5 hex color strings in this order: background, surface, accent, text, muted — e.g. ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"]. Never an object. Background and text MUST have sufficient contrast for readability. Accent should be distinct from background.
-- typography: A system font stack for headings and body (e.g. "Georgia, serif / system-ui, sans-serif"). No Google Fonts or custom fonts — only fonts available without loading external resources.
+- typography: A system font stack for headings and body (e.g. "Georgia, serif / system-ui, sans-serif"). No Google Fonts or custom fonts — only fonts available without loading external resources. Choose stacks a working designer would ship today; novelty stacks (Comic Sans MS, Impact, Papyrus) only when the direction genuinely demands them.
 - mood: 2-3 word mood descriptor
 
 Also provide "states": a JSON array of exactly 3 state names (views/screens/compositions) that make sense for this brief — a fintech app might get ["landing", "portfolio", "transactions"]; a concert poster might get ["announce", "lineup", "tickets"]. These are SHARED across all directions: every direction will render exactly these 3 states so they can be compared side by side. Do not default to "hero/dashboard/settings" unless those genuinely fit.
@@ -163,6 +169,7 @@ Design quality:
 - Use realistic placeholder content — real-looking names, dollar amounts, dates, titles — not "Lorem ipsum" or "John Doe"
 - Typography hierarchy: clear distinction between headings, subheadings, body, and labels
 - Composition: consider visual weight distribution, focal points, and reading flow
+- Contemporary baseline: this must read as a screen designed THIS year — generous line-height and spacing, a restrained border palette, soft elevation or confident flat surfaces, a large legible type scale, current component idioms. Dated web styling (2010s bootstrap cards, heavy bevels, tiny dense text) only when the direction's era explicitly calls for it
 
 Completeness — a finished screen that FITS:
 - The frame is exactly {ARTBOARD_WIDTH}×{ARTBOARD_HEIGHT} and DOES NOT SCROLL. `overflow: hidden` means anything past the bottom edge is invisible, not reachable. Everything you draw must fit inside it.
@@ -1123,11 +1130,12 @@ impl Plugin {
         let text = run_agent(
             INVENT_PROMPT,
             brief,
-            Upstream::OpenRouter,
+            INVENTION_UPSTREAM,
             INVENTION_MODEL,
-            // Ignored on openrouter; the field does not exist there.
-            false,
-            // High, deliberately: this step is asked for contrast.
+            // Thinking on: choosing three genuinely different, tasteful
+            // directions is judgment, and deliberation is where taste lives.
+            true,
+            // Ignored on claude_agent_sdk; kept for the openrouter branch.
             0.9,
             2000,
             INVENT_TIMEOUT,
