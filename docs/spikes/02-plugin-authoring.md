@@ -233,3 +233,34 @@ the host skips injecting the db proxy and publishing its conduit port.
 | VM memory change (stop / set / start) | ~30s |
 | `podman build mcp` at 6 GiB, warm caches | 117s |
 | Agent → tool → nested agent → structured result | 11s |
+
+
+## 9. The 2026-08-03 stuck-run incident — three platform behaviours, measured
+
+A full board rendered and persisted, then the tab sat in "exploring" for
+30+ minutes with no refine affordance. Post-mortem, each behaviour verified:
+
+1. **Client death does not stop a daemon-side spawn.** Killing the CLI process
+   that ran `agents spawn` orphaned the agent, which kept working ~9 minutes
+   (its DB writes timestamp it), contending the Claude runner's FIFO lane with
+   the interactive run and inflating "active agents" with nothing visible
+   anywhere. There is no server-side kill-by-id at 2.2.15; the stream IS the
+   leash — except:
+2. **`timeout_seconds` on the spawn request did not end the run.** The
+   orchestrator churned past its 1800s request cap; only stopping its plugin
+   CONTAINER (`podman stop`, via the vendored podman +
+   `CONTAINERS_HELPER_BINARY_DIR`) freed the image. Corollary: **plugin
+   containers can outlive both their completion and their cap** — teardown is
+   not guaranteed. `development plugins mcp reset` fails with "image is in use
+   by a container" when this happens; `scripts/agents-sweep.sh` documents the
+   recovery.
+3. **The plugin's postgres lives in a per-plugin SCHEMA** —
+   `plugin_<owner>_<name>_<version>_<hash>` inside the daemon's `objectiveai`
+   database — not in the shared default schema the scaffold README implies.
+   Better isolation than documented; remember it when debugging with psql.
+
+Phosphene-side hardening that came out of it: bounded orchestration prompts
+(never re-render, stop after the last result), a hard `maxToolCalls` budget
+that aborts with a named error instead of churning, a stop button, and
+resume-by-id (`get_exploration` + `get_state`) so no stored board is ever
+hostage to a stuck tab again.

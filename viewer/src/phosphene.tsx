@@ -21,12 +21,13 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Client, functionsListExecute } from "@objectiveai/sdk";
 import { transport } from "./transport";
-import type { Direction } from "./lib/directions";
+import type { Direction, Invention } from "./lib/directions";
 import { ARTBOARD_HEIGHT, ARTBOARD_WIDTH, cellKey, type CellStatus } from "./lib/board";
 import {
   deriveExploration,
   explore,
   refine,
+  resume,
   type Exploration,
   type ScoreEvent,
 } from "./lib/orchestrator";
@@ -72,6 +73,34 @@ function mergeExploration(base: Exploration | undefined, current: Exploration): 
     summary: current.summary ?? base.summary,
     tools: current.tools,
   };
+}
+
+/** The one localStorage key. Namespaced `phosphene.*` — the origin is shared
+ * by every tab in the viewer (spikes/01 §E), so exclusivity is never assumed. */
+const STORE_KEY = "phosphene.lastExploration";
+
+interface StoredExploration {
+  explorationId: string;
+  brief: string;
+}
+
+function loadStored(): StoredExploration | undefined {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as StoredExploration;
+    return parsed.explorationId ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveStored(value: StoredExploration): void {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(value));
+  } catch {
+    // Storage full or unavailable: resume is a convenience, never a failure.
+  }
 }
 
 interface Zoomed {
@@ -270,6 +299,14 @@ export default function Phosphene({ arguments: _args }: TabProps) {
   const start = useCallback(async () => {
     const text = brief.trim();
     if (text.length === 0 || run.phase === "exploring") return;
+    // Escape hatch: `resume:<exploration-id>` replays any stored board by id —
+    // including boards from runs that never reached done (where localStorage
+    // was never written). The database is the truth; this is just a key.
+    if (text.toLowerCase().startsWith("resume:")) {
+      const id = text.slice("resume:".length).trim();
+      if (id) void doResume(id, `resumed ${id.slice(0, 8)}…`);
+      return;
+    }
     abort.current = { aborted: false };
     const signal = abort.current;
     // The id is the name of the WORK, not of the run — refine rounds and any
@@ -300,6 +337,9 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       );
       if (!signal.aborted) {
         setRun({ phase: "done", brief: text, explorationId, exploration });
+        if (exploration.invention) {
+          saveStored({ explorationId, brief: text });
+        }
       }
     } catch (error) {
       console.error("phosphene: exploration failed", error);
@@ -316,6 +356,74 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       }
     }
   }, [brief, run.phase]);
+
+  /** The stop control: flips the abort flag, which breaks the stream — and
+   * breaking the stream cancels the daemon-side run. The formerly-undocumented
+   * close-tab behaviour, promoted to a button. */
+  const stop = useCallback(() => {
+    if (run.phase !== "exploring") return;
+    abort.current.aborted = true;
+    setRun((prev) =>
+      prev.phase === "exploring"
+        ? {
+            phase: "failed",
+            brief: prev.brief,
+            explorationId: prev.explorationId,
+            reason: "stopped by you — the board keeps everything already rendered",
+            exploration: mergeExploration(prev.base, prev.exploration),
+          }
+        : prev,
+    );
+  }, [run.phase]);
+
+  const doResume = useCallback(
+    async (explorationId: string, label: string) => {
+      if (run.phase === "exploring") return;
+      abort.current = { aborted: false };
+      const signal = abort.current;
+      setRun({
+        phase: "exploring",
+        brief: label,
+        explorationId,
+        exploration: deriveExploration([]),
+      });
+      try {
+        const client = Client.viewer(await transport());
+        const replay = await resume(
+          client,
+          explorationId,
+          (p) =>
+            setRun((prev) =>
+              prev.phase === "exploring"
+                ? { ...prev, aih: p.aih, exploration: deriveExploration(p.tools) }
+                : prev,
+            ),
+          signal,
+        );
+        console.info(`phosphene: resumed — ${replay.tools.length} reads`);
+        if (!signal.aborted) {
+          setRun({
+            phase: "done",
+            brief: label,
+            explorationId,
+            exploration: replay,
+          });
+          if (replay.invention) saveStored({ explorationId, brief: label });
+        }
+      } catch (error) {
+        console.error("phosphene: resume failed", error);
+        if (!signal.aborted) {
+          setRun({
+            phase: "failed",
+            brief: label,
+            explorationId,
+            reason: String(error).slice(0, 300),
+          });
+        }
+      }
+    },
+    [run.phase],
+  );
 
   const [feedback, setFeedback] = useState("");
   const sendFeedback = useCallback(async () => {
@@ -352,12 +460,16 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       );
       console.info(`phosphene: refine done — ${round.tools.length} tool calls`);
       if (!signal.aborted) {
+        const merged = mergeExploration(prior, round);
         setRun({
           phase: "done",
           brief: priorBrief,
           explorationId,
-          exploration: mergeExploration(prior, round),
+          exploration: merged,
         });
+        if (merged.invention) {
+          saveStored({ explorationId, brief: priorBrief });
+        }
       }
     } catch (error) {
       console.error("phosphene: refine failed", error);
@@ -424,6 +536,25 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           >
             {busy ? "exploring…" : "explore"}
           </button>
+          {busy && (
+            <button type="button" className="ph-button ph-button--ghost" onClick={stop}>
+              stop
+            </button>
+          )}
+          {!busy && run.phase === "idle" && loadStored() && (
+            <button
+              type="button"
+              className="ph-button ph-button--ghost"
+              onClick={() => {
+                const stored = loadStored();
+                if (stored) void doResume(stored.explorationId, stored.brief);
+              }}
+              disabled={health.state !== "ready"}
+              title={`Reload "${loadStored()?.brief.slice(0, 60) ?? ""}" from storage — no generation`}
+            >
+              resume last
+            </button>
+          )}
           <span className="ph-hint">⌘↵</span>
         </div>
       </section>

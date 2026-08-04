@@ -51,6 +51,13 @@ export interface AgentRun {
   /** Hard ceiling handed to the daemon. */
   timeoutSeconds?: number;
   /**
+   * Hard cap on tool CALLS in one run. The 2026-08-03 incident: an
+   * open-ended "verify" instruction sent the orchestrator into 18+ minutes
+   * of post-completion churn that only the 30-minute daemon timeout ended.
+   * A run that exceeds its budget is aborted with a NAMED error instead.
+   */
+  maxToolCalls?: number;
+  /**
    * Abort if no chunk arrives for this long. This is the lesson legacy paid
    * seven commits for (docs/legacy §5): hang detection belongs on the GAP
    * BETWEEN CHUNKS, not on total duration, because a healthy generation
@@ -248,6 +255,16 @@ export async function runAgent(
         if (m.role !== "assistant") continue;
         for (const call of m.tool_calls ?? []) {
           const i = call.index ?? 0;
+          if (
+            run.maxToolCalls !== undefined &&
+            !inflight.has(i) &&
+            completed.length + inflight.size >= run.maxToolCalls
+          ) {
+            throw new Error(
+              `the agent exceeded its ${run.maxToolCalls} tool-call budget — ` +
+                `aborted rather than churning to the timeout`,
+            );
+          }
           const event = inflight.get(i) ?? { name: "", arguments: "" };
           if (call.function?.name) event.name += call.function.name;
           if (call.function?.arguments) event.arguments += call.function.arguments;

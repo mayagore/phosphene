@@ -34,10 +34,19 @@ Use exploration_id "${explorationId}" on EVERY tool call, verbatim.
 
 The procedure:
 1. Call phosphene_invent_directions ONCE with the user's brief. It returns 3 directions and 3 shared states.
-2. Call phosphene_render_state once per (direction × state) — 9 calls, no more, no fewer. For each direction, render states[0] BEFORE its other two states (the tool pins the shared chrome from stored state; you never pass HTML). Pass direction_index (0, 1 or 2), the full states array, and the label. If one render fails, continue with the rest. Before summarizing, verify all 9 (direction, state) pairs were rendered — if any is missing, render it.
+2. Call phosphene_render_state once per (direction × state) — 9 calls, no more, no fewer, and NEVER the same (direction_index, label) twice. For each direction, render states[0] BEFORE its other two states (the tool pins the shared chrome from stored state; you never pass HTML — never pass anchor_html). Pass direction_index (0, 1 or 2), the full states array, and the label. If one render fails, continue with the rest — do NOT retry it.
 3. If — and only if — the user named judge models, call phosphene_score_direction once per (direction × judge model) after that direction's states are rendered. Report every judge's scores separately; never average across judges.
 
-Then write a 2-3 sentence closing summary. Do not restate the documents or scores — the human already watched them arrive.`;
+After the 9th render result (and any judging), STOP CALLING TOOLS and write a closing summary of AT MOST 2 sentences. Do not restate the documents or scores — the human already watched them arrive.`;
+
+const resumePrompt = (
+  explorationId: string,
+) => `You replay an already-stored design exploration into the display. No generation — every call is an instant read. Use exploration_id "${explorationId}" on every call.
+
+1. Call phosphene_get_exploration ONCE. It returns the directions and states.
+2. Call phosphene_get_state once per (direction_index, label) — one call for every combination, never the same pair twice, direction_index 0 to N-1 in order. If one read fails, continue.
+
+Then say exactly "resumed" and stop.`;
 
 const refinePrompt = (
   explorationId: string,
@@ -47,7 +56,7 @@ const refinePrompt = (
 
 Use exploration_id "${explorationId}" on EVERY call, verbatim. The exploration's directions, by direction_index: ${directions.map((n, i) => `${i}="${n}"`).join(", ")}. Its states: ${states.map((s) => `"${s}"`).join(", ")}.
 
-Read the user's feedback and call phosphene_refine_state once per (direction_index, label) the feedback targets — pass the relevant part of the feedback verbatim as \`feedback\`. If it names one direction, revise that direction's affected states (all three only if the feedback is about the direction as a whole). If it clearly targets everything, revise every state of every direction. At least 1 call, at most 9. If one call fails, continue with the rest.
+Read the user's feedback and call phosphene_refine_state once per (direction_index, label) the feedback targets — never the same pair twice — passing the relevant part of the feedback verbatim as \`feedback\`. If it names one direction, revise that direction's affected states (all three only if the feedback is about the direction as a whole). If it clearly targets everything, revise every state of every direction. At least 1 call, at most 9. If one call fails, continue with the rest — do NOT retry it. After the last result, STOP CALLING TOOLS.
 
 Then one closing sentence. Do not restate the documents.`;
 
@@ -92,7 +101,7 @@ export function deriveExploration(tools: ToolEvent[], summary?: string): Explora
   const out: Exploration = { cells: {}, scores: [], tools, summary };
 
   for (const event of tools) {
-    if (event.name.endsWith("invent_directions")) {
+    if (event.name.endsWith("invent_directions") || event.name.endsWith("get_exploration")) {
       if (event.result) {
         try {
           out.invention = normalizeInvention(JSON.parse(event.result));
@@ -104,7 +113,7 @@ export function deriveExploration(tools: ToolEvent[], summary?: string): Explora
       continue;
     }
 
-    if (event.name.endsWith("render_state") || event.name.endsWith("refine_state")) {
+    if (event.name.endsWith("_state")) {
       const args = parseArgs(event.arguments);
       const index = typeof args?.direction_index === "number" ? args.direction_index : undefined;
       const label = typeof args?.label === "string" ? args.label : undefined;
@@ -191,6 +200,8 @@ export async function explore(
       // render; the timeout covers the whole exploration.
       timeoutSeconds: 1800,
       stallSeconds: 660,
+      // 1 invent + 9 renders + up to 6 judges; 17th call = churn, abort.
+      maxToolCalls: 16,
     },
     (progress) => {
       latest = progress.tools;
@@ -229,6 +240,38 @@ export async function refine(
       // At most 9 revisions at ~40-60s each, sequential.
       timeoutSeconds: 1200,
       stallSeconds: 660,
+      maxToolCalls: 9,
+    },
+    (progress) => {
+      latest = progress.tools;
+      onProgress?.(progress);
+    },
+    signal,
+  );
+  return deriveExploration(latest, summary);
+}
+
+/** Replay a stored exploration into the display — pure reads, id is enough. */
+export async function resume(
+  executor: CommandExecutor,
+  explorationId: string,
+  onProgress?: (p: AgentProgress) => void,
+  signal?: AbortFlag,
+): Promise<Exploration> {
+  let latest: ToolEvent[] = [];
+  const summary = await runAgent(
+    executor,
+    {
+      system: resumePrompt(explorationId),
+      user: "Replay the exploration.",
+      model: "openai/gpt-4o-mini",
+      temperature: 0,
+      maxTokens: 3000,
+      plugins: [{ ...PHOSPHENE_PLUGIN }],
+      timeoutSeconds: 300,
+      stallSeconds: 120,
+      // 1 get_exploration + up to 9 get_state.
+      maxToolCalls: 10,
     },
     (progress) => {
       latest = progress.tools;

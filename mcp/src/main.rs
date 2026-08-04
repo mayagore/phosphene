@@ -288,6 +288,22 @@ pub struct RenderArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetExplorationArgs {
+    /// The exploration to look up.
+    pub exploration_id: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GetStateArgs {
+    /// The exploration — same id given to `invent_directions`.
+    pub exploration_id: String,
+    /// Which direction, by its `invent_directions` index.
+    pub direction_index: u32,
+    /// Which state to read back.
+    pub label: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RefineArgs {
     /// The exploration — same id given to `invent_directions`.
     pub exploration_id: String,
@@ -1442,6 +1458,68 @@ impl Plugin {
             label: label.to_string(),
             html,
         }))
+    }
+
+    #[rmcp::tool(
+        description = "Read back a stored exploration's brief, directions and shared \
+                       states — no generation, instant. Call this FIRST when \
+                       replaying a stored exploration, then get_state per cell."
+    )]
+    async fn get_exploration(
+        &self,
+        Parameters(args): Parameters<GetExplorationArgs>,
+    ) -> Result<Json<Invention>, rmcp::ErrorData> {
+        use sqlx::Row as _;
+        let pool = pool().await?;
+        let row = sqlx::query(
+            "SELECT directions, states FROM phosphene_explorations WHERE exploration_id = $1",
+        )
+        .bind(args.exploration_id.trim())
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| internal(error_chain("read the exploration", &e)))?
+        .ok_or_else(|| {
+            internal(format!("no exploration {}", args.exploration_id.trim()))
+        })?;
+        let directions: Vec<Direction> = serde_json::from_value(row.get("directions"))
+            .map_err(|e| internal(format!("stored directions did not parse: {e}")))?;
+        let states: Vec<String> = serde_json::from_value(row.get("states"))
+            .map_err(|e| internal(format!("stored states did not parse: {e}")))?;
+        Ok(Json(Invention { directions, states }))
+    }
+
+    #[rmcp::tool(
+        description = "Read back ONE already-rendered state of ONE direction from \
+                       storage — no generation, instant. Used to replay a stored \
+                       exploration into a fresh display: call it once per \
+                       (direction_index, label) and the documents stream back \
+                       exactly as render_state's results do."
+    )]
+    async fn get_state(
+        &self,
+        Parameters(args): Parameters<GetStateArgs>,
+    ) -> Result<Json<Rendered>, rmcp::ErrorData> {
+        let label = args.label.trim();
+        let pool = pool().await?;
+        let html: Option<String> = sqlx::query_scalar(
+            "SELECT html FROM phosphene_artboards
+             WHERE exploration_id = $1 AND direction_index = $2 AND label = $3",
+        )
+        .bind(args.exploration_id.trim())
+        .bind(args.direction_index as i32)
+        .bind(label)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| internal(error_chain("read the artboard", &e)))?;
+        match html {
+            Some(html) => Ok(Json(Rendered { label: label.to_string(), html })),
+            None => Err(internal(format!(
+                "no stored artboard for direction {} state \"{label}\" in \
+                 exploration {}",
+                args.direction_index,
+                args.exploration_id.trim()
+            ))),
+        }
     }
 
     #[rmcp::tool(
