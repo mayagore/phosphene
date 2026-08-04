@@ -29,9 +29,9 @@ futures = "0.3.33"
 schemars = "1.2.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.151"
-# `sync` is scaffold residue (its OnceCell went with the demo tools) kept
-# only because dropping a default-ish feature invites subtle breakage;
-# `time` is OURS — the inter-chunk stall watchdog in `run_agent`.
+# `sync` is the OnceCell guarding table creation (back in use since the
+# postgres reversal — docs/scoring.md §4); `time` is the inter-chunk stall
+# watchdog in `run_agent`.
 tokio = { version = "1.50.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 [profile.release]

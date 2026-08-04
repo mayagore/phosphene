@@ -28,14 +28,28 @@ export const PHOSPHENE_PLUGIN = {
   version: "v0.1.0",
 } as const;
 
-const ORCHESTRATOR_PROMPT = `You explore design briefs using your phosphene tools. A human is watching the board fill in as you work — your tool calls ARE the product; your prose is only a closing summary.
+const explorePrompt = (explorationId: string) => `You explore design briefs using your phosphene tools. A human is watching the board fill in as you work — your tool calls ARE the product; your prose is only a closing summary.
+
+Use exploration_id "${explorationId}" on EVERY tool call, verbatim.
 
 The procedure:
 1. Call phosphene_invent_directions ONCE with the user's brief. It returns 3 directions and 3 shared states.
-2. Call phosphene_render_state once per (direction × state) — 9 calls. For each direction, render states[0] BEFORE its other two states (the tool pins the shared chrome from its own cache; you never pass HTML). Pass direction_index (0, 1 or 2), the full states array, and the label. If one render fails, continue with the rest.
+2. Call phosphene_render_state once per (direction × state) — 9 calls, no more, no fewer. For each direction, render states[0] BEFORE its other two states (the tool pins the shared chrome from stored state; you never pass HTML). Pass direction_index (0, 1 or 2), the full states array, and the label. If one render fails, continue with the rest. Before summarizing, verify all 9 (direction, state) pairs were rendered — if any is missing, render it.
 3. If — and only if — the user named judge models, call phosphene_score_direction once per (direction × judge model) after that direction's states are rendered. Report every judge's scores separately; never average across judges.
 
 Then write a 2-3 sentence closing summary. Do not restate the documents or scores — the human already watched them arrive.`;
+
+const refinePrompt = (
+  explorationId: string,
+  directions: string[],
+  states: string[],
+) => `You revise an already-rendered design exploration by applying the user's feedback with your phosphene_refine_state tool. A human is watching the board update.
+
+Use exploration_id "${explorationId}" on EVERY call, verbatim. The exploration's directions, by direction_index: ${directions.map((n, i) => `${i}="${n}"`).join(", ")}. Its states: ${states.map((s) => `"${s}"`).join(", ")}.
+
+Read the user's feedback and call phosphene_refine_state once per (direction_index, label) the feedback targets — pass the relevant part of the feedback verbatim as \`feedback\`. If it names one direction, revise that direction's affected states (all three only if the feedback is about the direction as a whole). If it clearly targets everything, revise every state of every direction. At least 1 call, at most 9. If one call fails, continue with the rest.
+
+Then one closing sentence. Do not restate the documents.`;
 
 export interface Exploration {
   invention?: Invention;
@@ -90,7 +104,7 @@ export function deriveExploration(tools: ToolEvent[], summary?: string): Explora
       continue;
     }
 
-    if (event.name.endsWith("render_state")) {
+    if (event.name.endsWith("render_state") || event.name.endsWith("refine_state")) {
       const args = parseArgs(event.arguments);
       const index = typeof args?.direction_index === "number" ? args.direction_index : undefined;
       const label = typeof args?.label === "string" ? args.label : undefined;
@@ -147,9 +161,13 @@ export function deriveExploration(tools: ToolEvent[], summary?: string): Explora
 
 /**
  * Spawn the exploration agent and stream derived board state to the caller.
+ * The caller mints `explorationId` (any unique string) and keeps it: refine
+ * rounds and reattach both key off it — it is the name of the work, not of
+ * the run.
  */
 export async function explore(
   executor: CommandExecutor,
+  explorationId: string,
   brief: string,
   onProgress?: (p: AgentProgress) => void,
   signal?: AbortFlag,
@@ -158,7 +176,7 @@ export async function explore(
   const summary = await runAgent(
     executor,
     {
-      system: ORCHESTRATOR_PROMPT,
+      system: explorePrompt(explorationId),
       user: `Brief: ${brief}`,
       // The orchestrator routes and reports; the design judgement happens
       // inside the tools. Cheap and near-deterministic is right.
@@ -181,5 +199,42 @@ export async function explore(
     signal,
   );
 
+  return deriveExploration(latest, summary);
+}
+
+/**
+ * Spawn a refine agent: one round of feedback applied to an existing
+ * exploration. Same display contract as explore — the board updates as
+ * refine_state results stream back.
+ */
+export async function refine(
+  executor: CommandExecutor,
+  explorationId: string,
+  directionNames: string[],
+  states: string[],
+  feedback: string,
+  onProgress?: (p: AgentProgress) => void,
+  signal?: AbortFlag,
+): Promise<Exploration> {
+  let latest: ToolEvent[] = [];
+  const summary = await runAgent(
+    executor,
+    {
+      system: refinePrompt(explorationId, directionNames, states),
+      user: `Feedback: ${feedback}`,
+      model: "openai/gpt-4o-mini",
+      temperature: 0.1,
+      maxTokens: 4000,
+      plugins: [{ ...PHOSPHENE_PLUGIN }],
+      // At most 9 revisions at ~40-60s each, sequential.
+      timeoutSeconds: 1200,
+      stallSeconds: 660,
+    },
+    (progress) => {
+      latest = progress.tools;
+      onProgress?.(progress);
+    },
+    signal,
+  );
   return deriveExploration(latest, summary);
 }

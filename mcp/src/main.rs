@@ -29,8 +29,10 @@ use objectiveai_mcp_plugin_framework::rmcp;
 // Likewise the SDK, whose `CommandExecutor` trait every `execute` is generic
 // over: a separately-resolved copy would be a different trait.
 use objectiveai_mcp_plugin_framework::objectiveai_sdk;
+use objectiveai_mcp_plugin_framework::{db, sqlx};
 
 use futures::StreamExt;
+use tokio::sync::OnceCell;
 use objectiveai_mcp_plugin_framework::tools::Tools;
 use objectiveai_sdk::cli::command::RequestBase;
 use objectiveai_sdk::cli::command::agents::message::RequestMessage;
@@ -254,15 +256,22 @@ pub struct InventArgs {
     /// The design brief, in the designer's own words — e.g. "a dating app
     /// where pickles match on brine compatibility".
     pub brief: String,
+    /// Caller-minted id for this whole exploration. Every later tool call —
+    /// render, score, refine, across any number of agent runs — uses the SAME
+    /// id; it is the key the daemon-database rows are scoped by.
+    pub exploration_id: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RenderArgs {
     /// The direction to render, exactly as `invent_directions` returned it.
     pub direction: Direction,
+    /// The exploration this render belongs to — same id given to
+    /// `invent_directions`.
+    pub exploration_id: String,
     /// Which direction this is, by its index in `invent_directions`' result.
-    /// Keys the plugin-side cache that `score_direction` reads — artboards are
-    /// ~9 KB each and do NOT travel back through the agent's context.
+    /// Keys the database rows that `score_direction` and `refine_state` read —
+    /// artboards are ~9 KB each and do NOT travel through the agent's context.
     pub direction_index: u32,
     /// Every shared state in the exploration, in order. The first is the
     /// anchor.
@@ -278,6 +287,19 @@ pub struct RenderArgs {
     pub anchor_html: Option<String>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct RefineArgs {
+    /// The exploration — same id given to `invent_directions`.
+    pub exploration_id: String,
+    /// Which direction, by its `invent_directions` index.
+    pub direction_index: u32,
+    /// Which state to revise.
+    pub label: String,
+    /// The feedback to apply, verbatim — the user's words, or a judge's
+    /// note. The revision changes ONLY what this demands.
+    pub feedback: String,
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Rendered {
     pub label: String,
@@ -290,9 +312,12 @@ pub struct ScoreArgs {
     /// The design brief the direction was invented for — fitness is judged
     /// against THIS text, so pass it verbatim.
     pub brief: String,
+    /// The exploration — same id given to `invent_directions`.
+    pub exploration_id: String,
     /// Which direction to score, by its `invent_directions` index. Its
-    /// artboards must already have been rendered in THIS run — `render_state`
-    /// caches them in the plugin, and this tool reads that cache.
+    /// artboards must already have been rendered (any run of this
+    /// exploration) — `render_state` stores them in the daemon's database,
+    /// and this tool reads those rows.
     pub direction_index: u32,
     /// The judge. REQUIRED, no default: the agent (and its human) choose the
     /// jury; phosphene owns only the rubric. Call this tool once per judge —
@@ -1075,36 +1100,174 @@ mod facts_tests {
 /// read. ~9 KB per artboard cannot ride back through the orchestrating
 /// agent's context — it would have to echo ~27 KB verbatim into tool
 /// arguments, which is expensive and which models get wrong.
-struct CachedDirection {
-    direction: Direction,
-    /// The full state list, in order — artboards are presented to the judge
-    /// in THIS order regardless of render order.
-    states: Vec<String>,
-    /// label → rendered document.
-    artboards: std::collections::HashMap<String, String>,
-}
-
-/// Every tool receives `&Self`. The one thing held between calls is the
-/// artboard cache. An in-process map is CORRECT scoping, not a shortcut: the
-/// daemon materializes this plugin as an ephemeral container per response id
-/// — one agent run, one container, evaporating when the connection drops
-/// (docs/platform/05-agent-identity.md §3) — so the process lifetime IS the
-/// run lifetime. If containers are ever recycled across runs, the fallback is
-/// postgres, which means reversing our `mcp.postgres: false` deviation with
-/// that as the written reason.
-///
-/// std Mutex, not tokio: no `.await` ever happens while it is held.
+/// Every tool receives `&Self`. Phosphene's tools hold NOTHING in-process:
+/// artboards live in the daemon's postgres, because ITERATION outlives the
+/// container. This is the pre-written reversal of the `postgres: false`
+/// deviation — the in-process cache died with each completion's container,
+/// and a refine round is by definition a later completion. The database is
+/// the daemon's, shared: distinctly-named tables, rows scoped by
+/// exploration_id.
 #[derive(Clone)]
-struct Plugin {
-    boards: Arc<std::sync::Mutex<std::collections::HashMap<u32, CachedDirection>>>,
+struct Plugin;
+
+/// One guard for all DDL — created on first use; a plugin container has
+/// nowhere to run a migration.
+static TABLES: OnceCell<()> = OnceCell::const_new();
+
+const CREATE_TABLES: &str = r#"
+CREATE TABLE IF NOT EXISTS phosphene_explorations (
+    exploration_id TEXT PRIMARY KEY,
+    brief          TEXT NOT NULL,
+    directions     JSONB NOT NULL,
+    states         JSONB NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS phosphene_artboards (
+    exploration_id  TEXT NOT NULL,
+    direction_index INT  NOT NULL,
+    label           TEXT NOT NULL,
+    html            TEXT NOT NULL,
+    round           INT  NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (exploration_id, direction_index, label)
+);
+"#;
+
+/// The pool, with the DDL guaranteed to have run once. Plain `sqlx::query`,
+/// never the compile-time-checked macro — the database a plugin talks to does
+/// not exist until a host creates its container.
+async fn pool() -> Result<db::Pool, rmcp::ErrorData> {
+    let pool = db::connect(Default::default())
+        .await
+        .map_err(|error| internal(error_chain("connect to the database", &*error)))?;
+    TABLES
+        .get_or_try_init(|| async {
+            // One statement per query — the pg wire protocol rejects
+            // multi-statement prepared queries.
+            for ddl in CREATE_TABLES.split(';').filter(|d| !d.trim().is_empty()) {
+                sqlx::query(ddl).execute(&pool).await.map(|_| ())?;
+            }
+            Ok::<(), sqlx::Error>(())
+        })
+        .await
+        .map_err(|error| internal(error_chain("create the tables", &error)))?;
+    Ok(pool)
 }
 
-impl Plugin {
-    fn new() -> Self {
-        Self {
-            boards: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        }
+/// sqlx's top-level Display is often just "error returned from database
+/// server" — the cause lives in the source chain, and whoever reads this
+/// gets one string.
+fn error_chain(doing: &str, error: &dyn std::error::Error) -> String {
+    let mut message = format!("{doing}: {error}");
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(&format!(": {cause}"));
+        source = cause.source();
     }
+    message
+}
+
+/// One direction + the shared state list, from the exploration row.
+async fn load_direction(
+    pool: &db::Pool,
+    exploration_id: &str,
+    index: u32,
+) -> Result<(Direction, Vec<String>), rmcp::ErrorData> {
+    use sqlx::Row as _;
+    let row = sqlx::query(
+        "SELECT directions, states FROM phosphene_explorations WHERE exploration_id = $1",
+    )
+    .bind(exploration_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| internal(error_chain("read the exploration", &e)))?
+    .ok_or_else(|| {
+        internal(format!(
+            "no exploration {exploration_id} — invent_directions creates it, \
+             with this same exploration_id"
+        ))
+    })?;
+    let directions: Vec<Direction> = serde_json::from_value(row.get("directions"))
+        .map_err(|e| internal(format!("stored directions did not parse: {e}")))?;
+    let states: Vec<String> = serde_json::from_value(row.get("states"))
+        .map_err(|e| internal(format!("stored states did not parse: {e}")))?;
+    let direction = directions.into_iter().nth(index as usize).ok_or_else(|| {
+        internal(format!("exploration {exploration_id} has no direction {index}"))
+    })?;
+    Ok((direction, states))
+}
+
+/// (label, html) pairs in INVENTION order — what a judge is shown.
+async fn load_artboards(
+    pool: &db::Pool,
+    exploration_id: &str,
+    index: u32,
+    states: &[String],
+) -> Result<Vec<(String, String)>, rmcp::ErrorData> {
+    use sqlx::Row as _;
+    let rows = sqlx::query(
+        "SELECT label, html FROM phosphene_artboards
+         WHERE exploration_id = $1 AND direction_index = $2",
+    )
+    .bind(exploration_id)
+    .bind(index as i32)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| internal(error_chain("read the artboards", &e)))?;
+    let mut by_label: std::collections::HashMap<String, String> = rows
+        .into_iter()
+        .map(|r| (r.get::<String, _>("label"), r.get::<String, _>("html")))
+        .collect();
+    Ok(states
+        .iter()
+        .filter_map(|label| by_label.remove(label).map(|html| (label.clone(), html)))
+        .collect())
+}
+
+/// Revision, not redesign — the system prompt's whole job is restraint.
+fn refine_system_prompt(states: &[String], label: &str, anchor_html: Option<&str>) -> String {
+    let consistency = match anchor_html {
+        Some(html) => {
+            let truncated: String = html.chars().take(MAX_ANCHOR_CHARS).collect();
+            format!(
+                "The direction's anchor state is already rendered — the revision must \
+                 keep matching its visual language (header/nav markup, spacing scale, \
+                 component styling). Here it is:\n\n{truncated}"
+            )
+        }
+        None => "This is the direction's ANCHOR state — its sibling states are pinned \
+                 to its markup, so preserve the shared chrome (header/nav, spacing \
+                 scale, component styling) unless the feedback explicitly targets it."
+            .to_string(),
+    };
+    let requirements = requirements();
+    format!(
+        "You are revising ONE state of an existing design direction. You will receive \
+         the current document and one piece of feedback. Apply the feedback precisely \
+         and change NOTHING else — same layout, same content, same visual language \
+         except where the feedback demands otherwise. This is a revision, not a \
+         redesign.\n\n{consistency}\n\n{requirements}\n\nRespond with a JSON \
+         object: {{\"label\": \"{label}\", \"html\": \"...\"}}. \
+         (States in this exploration: {}.)",
+        states
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+fn refine_user_prompt(
+    direction: &Direction,
+    label: &str,
+    current: &str,
+    feedback: &str,
+) -> String {
+    format!(
+        "Direction: \"{}\" — {}\nTypography: {}\nMood: {}\nState being revised: \
+         \"{label}\"\n\nCURRENT DOCUMENT:\n{current}\n\nFEEDBACK TO APPLY:\n{feedback}",
+        direction.name, direction.description, direction.typography, direction.mood,
+    )
 }
 
 #[rmcp::tool_router]
@@ -1144,6 +1307,24 @@ impl Plugin {
 
         let parsed = parse_json_loose(&text).map_err(internal)?;
         let invention = normalize_invention(&parsed).map_err(internal)?;
+
+        // Persist — refine rounds are later completions and must find this.
+        let pool = pool().await?;
+        sqlx::query(
+            "INSERT INTO phosphene_explorations (exploration_id, brief, directions, states)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (exploration_id)
+             DO UPDATE SET brief = EXCLUDED.brief, directions = EXCLUDED.directions,
+                           states = EXCLUDED.states",
+        )
+        .bind(args.exploration_id.trim())
+        .bind(brief)
+        .bind(serde_json::to_value(&invention.directions).map_err(|e| internal(e.to_string()))?)
+        .bind(serde_json::to_value(&invention.states).map_err(|e| internal(e.to_string()))?)
+        .execute(&pool)
+        .await
+        .map_err(|e| internal(error_chain("store the exploration", &e)))?;
+
         Ok(Json(invention))
     }
 
@@ -1176,17 +1357,23 @@ impl Plugin {
         // first state. Pinning happens plugin-side so ~9 KB of markup never
         // rides through the orchestrating agent's context — the same
         // cache-not-context rule score_direction lives by.
-        let anchor_html: Option<String> = args.anchor_html.clone().or_else(|| {
-            let anchor_label = states.first()?;
-            if label == anchor_label {
-                return None; // the anchor itself renders unpinned
+        let anchor_html: Option<String> = match (&args.anchor_html, states.first()) {
+            (Some(explicit), _) => Some(explicit.clone()),
+            (None, Some(anchor_label)) if label != anchor_label => {
+                let pool = pool().await?;
+                sqlx::query_scalar::<_, String>(
+                    "SELECT html FROM phosphene_artboards
+                     WHERE exploration_id = $1 AND direction_index = $2 AND label = $3",
+                )
+                .bind(args.exploration_id.trim())
+                .bind(args.direction_index as i32)
+                .bind(anchor_label)
+                .fetch_optional(&pool)
+                .await
+                .map_err(|e| internal(error_chain("read the anchor", &e)))?
             }
-            let boards = self.boards.lock().expect("boards mutex poisoned");
-            boards
-                .get(&args.direction_index)
-                .and_then(|cached| cached.artboards.get(anchor_label))
-                .cloned()
-        });
+            _ => None, // the anchor itself renders unpinned
+        };
 
         let slots = ["bg", "surface", "accent", "text", "muted"];
         let swatches = slots
@@ -1231,19 +1418,112 @@ impl Plugin {
 
         let html = extract_html(&text, label).map_err(internal)?;
 
-        // Cache for score_direction — the document must not have to ride back
-        // through the agent's context to be judged.
-        {
-            let mut boards = self.boards.lock().expect("boards mutex poisoned");
-            let entry = boards
-                .entry(args.direction_index)
-                .or_insert_with(|| CachedDirection {
-                    direction: args.direction.clone(),
-                    states: states.clone(),
-                    artboards: Default::default(),
-                });
-            entry.artboards.insert(label.to_string(), html.clone());
+        // Persist for score_direction and refine_state — the document must
+        // never ride through the agent's context, and it must OUTLIVE this
+        // container so a later round can revise it.
+        let pool = pool().await?;
+        sqlx::query(
+            "INSERT INTO phosphene_artboards (exploration_id, direction_index, label, html)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (exploration_id, direction_index, label)
+             DO UPDATE SET html = EXCLUDED.html,
+                           round = phosphene_artboards.round + 1,
+                           updated_at = now()",
+        )
+        .bind(args.exploration_id.trim())
+        .bind(args.direction_index as i32)
+        .bind(label)
+        .bind(&html)
+        .execute(&pool)
+        .await
+        .map_err(|e| internal(error_chain("store the artboard", &e)))?;
+
+        Ok(Json(Rendered {
+            label: label.to_string(),
+            html,
+        }))
+    }
+
+    #[rmcp::tool(
+        description = "Revise ONE rendered state of ONE direction by applying \
+                       feedback — the user's words, or a judge's note. Changes only \
+                       what the feedback demands, preserves the direction's visual \
+                       language, and updates the stored board so later scoring sees \
+                       the revision. Requires the state to have been rendered \
+                       already (any earlier run of the same exploration_id)."
+    )]
+    async fn refine_state(
+        &self,
+        Parameters(args): Parameters<RefineArgs>,
+    ) -> Result<Json<Rendered>, rmcp::ErrorData> {
+        let label = args.label.trim();
+        let feedback = args.feedback.trim();
+        if feedback.is_empty() {
+            return Err(internal("feedback is empty — nothing to apply"));
         }
+        let eid = args.exploration_id.trim();
+        let pool = pool().await?;
+        let (direction, states) = load_direction(&pool, eid, args.direction_index).await?;
+
+        let current: Option<String> = sqlx::query_scalar(
+            "SELECT html FROM phosphene_artboards
+             WHERE exploration_id = $1 AND direction_index = $2 AND label = $3",
+        )
+        .bind(eid)
+        .bind(args.direction_index as i32)
+        .bind(label)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| internal(error_chain("read the current state", &e)))?;
+        let Some(current) = current else {
+            return Err(internal(format!(
+                "state \"{label}\" of direction {} has never been rendered in \
+                 exploration {eid} — render_state comes first",
+                args.direction_index
+            )));
+        };
+
+        // Pin the anchor exactly as render does, unless we ARE the anchor.
+        let anchor_html: Option<String> = match states.first() {
+            Some(anchor_label) if label != anchor_label => sqlx::query_scalar(
+                "SELECT html FROM phosphene_artboards
+                 WHERE exploration_id = $1 AND direction_index = $2 AND label = $3",
+            )
+            .bind(eid)
+            .bind(args.direction_index as i32)
+            .bind(anchor_label)
+            .fetch_optional(&pool)
+            .await
+            .map_err(|e| internal(error_chain("read the anchor", &e)))?,
+            _ => None,
+        };
+
+        let text = run_agent(
+            &refine_system_prompt(&states, label, anchor_html.as_deref()),
+            &refine_user_prompt(&direction, label, &current, feedback),
+            GENERATION_UPSTREAM,
+            GENERATION_MODEL,
+            // Revision is judgment about what NOT to touch — thinking on.
+            true,
+            0.7,
+            8000,
+            RENDER_TIMEOUT,
+        )
+        .await?;
+        let html = extract_html(&text, label).map_err(internal)?;
+
+        sqlx::query(
+            "UPDATE phosphene_artboards
+             SET html = $4, round = round + 1, updated_at = now()
+             WHERE exploration_id = $1 AND direction_index = $2 AND label = $3",
+        )
+        .bind(eid)
+        .bind(args.direction_index as i32)
+        .bind(label)
+        .bind(&html)
+        .execute(&pool)
+        .await
+        .map_err(|e| internal(error_chain("store the revision", &e)))?;
 
         Ok(Json(Rendered {
             label: label.to_string(),
@@ -1286,37 +1566,19 @@ impl Plugin {
 
         // Read everything needed out of the cache, then DROP the lock before
         // the await below — a std::sync::Mutex may never be held across one.
-        let (direction, ordered) = {
-            let boards = self.boards.lock().expect("boards mutex poisoned");
-            let Some(cached) = boards.get(&args.direction_index) else {
-                let have: Vec<u32> = boards.keys().copied().collect();
-                return Err(internal(format!(
-                    "no artboards cached for direction {} — call render_state first \
-                     (in this same run; the cache does not outlive the agent). \
-                     Cached direction indices: {have:?}",
-                    args.direction_index
-                )));
-            };
-            // Present states in invention order, not render order, and record
-            // exactly what the judge saw.
-            let ordered: Vec<(String, String)> = cached
-                .states
-                .iter()
-                .filter_map(|label| {
-                    cached
-                        .artboards
-                        .get(label)
-                        .map(|html| (label.clone(), html.clone()))
-                })
-                .collect();
-            if ordered.is_empty() {
-                return Err(internal(format!(
-                    "direction {} is cached but has no rendered states",
-                    args.direction_index
-                )));
-            }
-            (cached.direction.clone(), ordered)
-        };
+        let eid = args.exploration_id.trim();
+        let pool = pool().await?;
+        let (direction, states) = load_direction(&pool, eid, args.direction_index).await?;
+        // Present states in invention order, not render order, and record
+        // exactly what the judge saw.
+        let ordered = load_artboards(&pool, eid, args.direction_index, &states).await?;
+        if ordered.is_empty() {
+            return Err(internal(format!(
+                "direction {} has no rendered states in exploration {eid} — \
+                 call render_state first",
+                args.direction_index
+            )));
+        }
 
         let text = run_agent(
             &judge_system_prompt(),
@@ -1378,16 +1640,19 @@ async fn main() -> Result<Infallible, std::io::Error> {
             .with_instructions(
                 "Explore a design brief visually, then judge it. Call \
                  invent_directions ONCE to get 3 \
-                 contrasting directions and 3 shared states. Then call render_state \
-                 once per (direction x state) — the FIRST state of each direction \
-                 before its others; the tool pins the shared chrome from its own \
-                 cache, so you never pass HTML between calls. Directions are \
-                 independent. A human is watching the board fill in as you work. To judge, call score_direction once per (direction x \
+                 contrasting directions and 3 shared states — mint one \
+                 exploration_id first and pass the SAME id to every tool call. \
+                 Then call render_state once per (direction x state), the FIRST \
+                 state of each direction before its others; the tool pins the \
+                 shared chrome from stored state, so you never pass HTML between \
+                 calls. score_direction judges a direction with a judge model the \
+                 user names; refine_state applies feedback to one rendered state. \
+                 A human is watching the board fill in as you work. To judge, call score_direction once per (direction x \
                  judge model) — you and your human choose the judges; pick models \
                  that genuinely differ, report every judge's scores separately, \
                  and NEVER average across judges: the disagreement is the point.",
             ),
-        Plugin::new(),
+        Plugin,
         tools,
     )
     .await

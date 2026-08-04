@@ -140,14 +140,18 @@ The sharp mechanical problem. Three states × ~9 KB of HTML cannot be passed as
 tool arguments — the orchestrating agent would have to echo ~27 KB verbatim, which
 is expensive and which models get wrong.
 
-**So `render_state` caches what it produced, in the plugin, keyed by
-(agent instance, direction index, label), and `score_direction` looks it up by
-index.** The container is per-agent and ephemeral, which matches the lifetime
-exactly. An in-process map, not a database.
+**So `render_state` stores what it produced in the daemon's postgres, keyed
+by (exploration_id, direction index, label), and `score_direction` and
+`refine_state` read those rows.**
 
-If containers turn out to be recycled between calls, the fallback is postgres —
-which means reversing our `mcp.postgres: false` deviation, with this as the
-written reason.
+~~An in-process map, not a database.~~ **Reversed 2026-08-03, exactly as
+pre-written below: iteration.** The in-process cache died with each
+completion's container, and a refine round is by definition a later
+completion — feedback applied to artboards that must outlive the run that
+made them. `mcp.postgres` flipped to `true`; tables are `phosphene_explorations`
+and `phosphene_artboards`, rows scoped by a caller-minted `exploration_id`
+(the name of the WORK, not of the run). Side effect worth having: the board
+is now recoverable after a tab close, which is the substrate reattach needs.
 
 ---
 

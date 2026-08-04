@@ -26,6 +26,7 @@ import { ARTBOARD_HEIGHT, ARTBOARD_WIDTH, cellKey, type CellStatus } from "./lib
 import {
   deriveExploration,
   explore,
+  refine,
   type Exploration,
   type ScoreEvent,
 } from "./lib/orchestrator";
@@ -42,9 +43,36 @@ type Health =
 
 type Run =
   | { phase: "idle" }
-  | { phase: "exploring"; brief: string; aih?: string; exploration: Exploration }
-  | { phase: "done"; brief: string; exploration: Exploration }
-  | { phase: "failed"; brief: string; reason: string; exploration?: Exploration };
+  | {
+      phase: "exploring";
+      brief: string;
+      explorationId: string;
+      aih?: string;
+      exploration: Exploration;
+      /** Prior rounds' merged board, kept under the live run so a refine
+       * round updates cells in place instead of blanking the board. */
+      base?: Exploration;
+    }
+  | { phase: "done"; brief: string; explorationId: string; exploration: Exploration }
+  | {
+      phase: "failed";
+      brief: string;
+      explorationId?: string;
+      reason: string;
+      exploration?: Exploration;
+    };
+
+/** Later rounds win cell-by-cell; scores accumulate; invention persists. */
+function mergeExploration(base: Exploration | undefined, current: Exploration): Exploration {
+  if (!base) return current;
+  return {
+    invention: current.invention ?? base.invention,
+    cells: { ...base.cells, ...current.cells },
+    scores: [...base.scores, ...current.scores],
+    summary: current.summary ?? base.summary,
+    tools: current.tools,
+  };
+}
 
 interface Zoomed {
   direction: Direction;
@@ -244,11 +272,20 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     if (text.length === 0 || run.phase === "exploring") return;
     abort.current = { aborted: false };
     const signal = abort.current;
-    setRun({ phase: "exploring", brief: text, exploration: deriveExploration([]) });
+    // The id is the name of the WORK, not of the run — refine rounds and any
+    // future reattach key off it, and every database row is scoped by it.
+    const explorationId = crypto.randomUUID();
+    setRun({
+      phase: "exploring",
+      brief: text,
+      explorationId,
+      exploration: deriveExploration([]),
+    });
     try {
       const client = Client.viewer(await transport());
       const exploration = await explore(
         client,
+        explorationId,
         text,
         (p) =>
           setRun((prev) =>
@@ -261,13 +298,16 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       console.info(
         `phosphene: exploration done — ${exploration.tools.length} tool calls`,
       );
-      if (!signal.aborted) setRun({ phase: "done", brief: text, exploration });
+      if (!signal.aborted) {
+        setRun({ phase: "done", brief: text, explorationId, exploration });
+      }
     } catch (error) {
       console.error("phosphene: exploration failed", error);
       if (!signal.aborted) {
         setRun((prev) => ({
           phase: "failed",
           brief: text,
+          explorationId,
           reason: String(error).slice(0, 300),
           // Keep whatever the board had — a failed run with 7 rendered cells
           // should show 7 cells and the error, not a blank page.
@@ -277,9 +317,69 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     }
   }, [brief, run.phase]);
 
+  const [feedback, setFeedback] = useState("");
+  const sendFeedback = useCallback(async () => {
+    const text = feedback.trim();
+    if (text.length === 0 || run.phase !== "done") return;
+    const { explorationId, exploration: prior, brief: priorBrief } = run;
+    const invention = prior.invention;
+    if (!invention) return;
+    abort.current = { aborted: false };
+    const signal = abort.current;
+    setFeedback("");
+    setRun({
+      phase: "exploring",
+      brief: priorBrief,
+      explorationId,
+      exploration: deriveExploration([]),
+      base: prior,
+    });
+    try {
+      const client = Client.viewer(await transport());
+      const round = await refine(
+        client,
+        explorationId,
+        invention.directions.map((d) => d.name),
+        invention.states,
+        text,
+        (p) =>
+          setRun((prev) =>
+            prev.phase === "exploring"
+              ? { ...prev, aih: p.aih, exploration: deriveExploration(p.tools) }
+              : prev,
+          ),
+        signal,
+      );
+      console.info(`phosphene: refine done — ${round.tools.length} tool calls`);
+      if (!signal.aborted) {
+        setRun({
+          phase: "done",
+          brief: priorBrief,
+          explorationId,
+          exploration: mergeExploration(prior, round),
+        });
+      }
+    } catch (error) {
+      console.error("phosphene: refine failed", error);
+      if (!signal.aborted) {
+        setRun({
+          phase: "failed",
+          brief: priorBrief,
+          explorationId,
+          reason: String(error).slice(0, 300),
+          exploration: prior,
+        });
+      }
+    }
+  }, [feedback, run]);
+
   const busy = run.phase === "exploring";
   const exploration =
-    run.phase === "idle" ? undefined : run.exploration;
+    run.phase === "idle"
+      ? undefined
+      : run.phase === "exploring"
+        ? mergeExploration(run.base, run.exploration)
+        : run.exploration;
   const invention = exploration?.invention;
   const cells = exploration?.cells ?? {};
   const doneCount = Object.values(cells).filter((c) => c.phase === "done").length;
@@ -443,6 +543,39 @@ export default function Phosphene({ arguments: _args }: TabProps) {
                 </div>
               );
             })}
+        </section>
+      )}
+
+      {/* ITERATION — the product's first noun. Feedback goes to a refine
+          agent that revises the stored board through phosphene_refine_state;
+          the cells update in place as revisions stream back. */}
+      {run.phase === "done" && invention && (
+        <section className="ph-composer">
+          <label className="ph-label" htmlFor="ph-feedback">
+            refine
+          </label>
+          <textarea
+            id="ph-feedback"
+            className="ph-input"
+            rows={2}
+            value={feedback}
+            placeholder={`Make ${invention.directions[0]?.name ?? "the first direction"}'s header calmer — or name any direction, state, or change`}
+            onChange={(e) => setFeedback(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void sendFeedback();
+            }}
+          />
+          <div className="ph-composer-row">
+            <button
+              type="button"
+              className="ph-button"
+              onClick={() => void sendFeedback()}
+              disabled={feedback.trim().length === 0 || health.state !== "ready"}
+            >
+              refine
+            </button>
+            <span className="ph-hint">⌘↵ · revises only what the feedback names</span>
+          </div>
         </section>
       )}
 

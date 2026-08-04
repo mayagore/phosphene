@@ -1,9 +1,9 @@
 {
-  "description": "Design iteration and judgment — invent contrasting design directions, render them across shared states, and score them with a swarm.",
+  "description": "Design iteration and judgment — invent contrasting design directions, render them across shared states, judge them with a multi-model panel, and refine them on feedback.",
   "mcp": {
     "containerfile": "mcp/Containerfile",
     "port": 8080,
-    "postgres": false,
+    "postgres": true,
     "development": {
       "caches": [
         "/build/target",
@@ -19,9 +19,13 @@
       {
         "title": "phosphene",
         "module": "./phosphene.js",
-        "styles": ["./phosphene.css"]
+        "styles": [
+          "./phosphene.css"
+        ]
       }
     ],
-    "development": { "output": "viewer/dist" }
+    "development": {
+      "output": "viewer/dist"
+    }
   }
 }
