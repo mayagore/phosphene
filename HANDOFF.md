@@ -10,7 +10,9 @@ whichever `docs/platform/*` artifact covers what you are about to touch.
 
 ```bash
 cd ~/Programming/phosphene
-pnpm install && pnpm run verify        # typecheck + build + 5 contract assertions
+bash scripts/resume.sh                  # daemon → laboratory → BOTH registrations → viewer
+cd viewer && pnpm install && pnpm run verify   # typecheck + build + 5 contract assertions
+cd ../mcp && cargo test                        # the tool half
 ```
 
 To see it running in the viewer:
@@ -68,7 +70,12 @@ broadly right, but §6.3 is now superseded — see below.
 1. **What phosphene is** — an ObjectiveAI plugin.
 2. **Repo** — `mayagore/phosphene`, local `~/Programming/phosphene`. Old repo is
    `mayagore/phosphene-legacy`, kept as reference, never modified.
-3. **Halves** — **viewer only. STANDS.** (Briefly retracted on 2026-08-01 in
+3. **Halves** — ~~viewer only. STANDS.~~ **REVERSED 2026-08-02: BOTH HALVES.**
+   `scaffold.sh` has no viewer-only mode — its one argument is which language
+   the MCP half is written in — and a viewer-only plugin can expose zero tools
+   (`plugin_image.rs:283-287` hard-fails). The MCP half lives in `mcp/` with
+   three tools; commits `bfdbfe0`/`4709fcc`. The paragraph below is the earlier
+   history, kept as written: (Briefly retracted on 2026-08-01 in
    favour of adding the MCP half; that retraction was itself wrong and is
    withdrawn — a script agent covers scoring with no container. See the
    ARCHITECTURE CHANGED section.) The viewer scaffold was hand-copied;

@@ -50,10 +50,11 @@ letting the platform do what it already does.
   `mayagore/phosphene` (the repo name is the plugin name on release), local
   `~/Programming/phosphene`, old repo renamed to `mayagore/phosphene-legacy`
   rather than deleted.
-- Viewer-only vs. both halves (§6.3). The brief pushes toward whatever the
-  scaffolding treats as the main path — and `scaffold.sh` only emits both halves,
-  while the README frames plugins as MCP-server-first with the viewer as an
-  optional adjunct. Worth weighing against phosphene genuinely not needing a
-  server today.
+- ~~Viewer-only vs. both halves (§6.3).~~ **Decided 2026-08-02: both halves** —
+  `scaffold.sh` only emits both, a viewer-only plugin can expose zero tools,
+  and "a plugin just is a set of tools" (Ronald). The MCP half lives in `mcp/`.
+  (Decided viewer-only 2026-07-31, reversed once on 2026-08-01 and back, then
+  settled by the scaffold's own definition — the full trail is in HANDOFF §6.3
+  and commits `50bed71`/`bfdbfe0`/`4709fcc`.)
 - Toolchain (§6.5) — though again, deviation from the scaffold's esbuild
   `build.mjs` now needs a written reason.

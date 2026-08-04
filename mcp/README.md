@@ -1,5 +1,9 @@
-This is an [ObjectiveAI](https://objectiveai.dev) MCP plugin — the
-server half.
+This is the server half of **phosphene** — an
+[ObjectiveAI](https://objectiveai.dev) MCP plugin. It serves three tools:
+`invent_directions`, `render_state`, `score_direction` (see `src/main.rs`;
+the rubric and mechanism are in `../docs/scoring.md`). The sections below
+derive from the scaffold's README and describe machinery shared by every
+plugin, corrected where phosphene differs.
 
 ## Where the plugin root is
 
@@ -22,9 +26,8 @@ If you scaffolded with `scaffold.sh`, the name is already yours — taken
 from the directory you ran it in — and you can skip to registering.
 Otherwise give it one first:
 
-```bash
-./rename.sh my-plugin
-```
+(The scaffold's `rename.sh` does not exist here — `scaffold.sh` assembly
+already applied the rename and removed the script.)
 
 That rewrites the base name where it appears — the package, the binary,
 the `cp` in the `Containerfile`, and the `NAME` constant. Do it before
@@ -71,16 +74,19 @@ async fn greet(&self, Parameters(args): Parameters<GreetArgs>) -> String {
 Put anything your tools share — clients, handles, configuration — on
 `Plugin`. Every tool receives it as `&self`.
 
-The seven tools already in there are named `scaffold_*_deleteme`. The
-names are deliberately unmissable: they are there to be read once and
-removed, and an agent that can see a `..._deleteme` is looking at a
-plugin whose author never got to writing their own. Delete them as soon
-as you have one of your own.
+Phosphene's three tools replaced the scaffold's `scaffold_*_deleteme`
+demos entirely (grep: no `deleteme` survives). Each tool does its work by
+spawning an agent completion back through the host; none holds state
+between runs — the in-process artboard cache lives exactly as long as the
+per-completion container.
 
 ## Using the database
 
 The database is an OPT-IN: `"postgres": true` in the manifest's `mcp`
-block (this scaffold opts in). Only then does the host give the
+block. **Phosphene opts OUT** (`"postgres": false`) — its tools store
+nothing across runs; the reason is written in
+`../docs/spikes/02-plugin-authoring.md` §7, and the fallback plan if that
+reverses is pre-written in `src/main.rs` beside the cache. Only then does the host give the
 container a Postgres — relayed through a proxy on the container's own
 loopback — so a plugin never configures one, it asks:
 
@@ -245,7 +251,7 @@ The two are independent; neither build sees the other.
 
 ## For agents
 
-`.agents/skills/plugin-development/SKILL.md` teaches a coding agent this
+`../.agents/skills/mcp-plugin-development/SKILL.md` teaches a coding agent this
 whole loop — the coordinates to read, the reset that makes an edit take
 effect, and the failures that look like something else. It travels with
 this directory, so an agent working in your plugin picks it up with no

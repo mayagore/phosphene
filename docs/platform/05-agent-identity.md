@@ -1,5 +1,9 @@
 # Pass 6 — agent identity: agents, tools, and what a plugin is
 
+> **Stale detail (2026-08-03):** written when phosphene had two tools;
+> three ship (`invent_directions`, `render_state`, `score_direction`).
+> The identity/versioning findings are unaffected.
+
 **Read at:** `ObjectiveAI/objectiveai@649b1d7cf2976036ddcec11d8be1001880d2ca87`
 (HEAD, verified unmoved) — 2026-08-03.
 

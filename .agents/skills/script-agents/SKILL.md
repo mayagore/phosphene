@@ -79,7 +79,7 @@ def build():
             "id": "call_1",
             "type": "function",
             "function": {
-                "name": "phosphene_scaffold_note_write_deleteme",
+                "name": "phosphene_invent_directions",
                 "arguments": json.dumps({"key": "probe", "value": "hello"})
             }
         }]
@@ -101,7 +101,7 @@ same tool call forever.
 - **Tool names are prefixed.** A plugin's tool is exposed as
   `<plugin-name>_<tool-name>` — e.g. the scaffold's
   `scaffold_note_write_deleteme` is called as
-  `phosphene_scaffold_note_write_deleteme`. The
+  `phosphene_invent_directions`. The
   prefix derives from the plugin's NAME, not its owner. Get it wrong
   and the call silently finds no tool.
 - **`arguments` is a JSON STRING**, not an object — hence
