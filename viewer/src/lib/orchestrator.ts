@@ -1,30 +1,23 @@
 /**
- * The architecture Ronald described, from the viewer's side.
+ * The architecture, from the viewer's side: the tab spawns ONE agent that
+ * declares phosphene's plugin, and that agent does everything — invents
+ * directions, renders every (direction × state) cell, and judges on request —
+ * by calling phosphene's tools. The tab renders what streams back. It is a
+ * window onto the agent, not the application.
  *
- * The tab does NOT do the work. It spawns ONE agent that declares phosphene's
- * plugin, and that agent calls phosphene's tools — `phosphene_invent_directions`,
- * `phosphene_render_state` — inside a container, each of which spawns its own
- * agent completion back through the host. The tab's whole job is to render what
- * that agent is doing.
+ * No document ever rides through the agent's context: render_state pins each
+ * direction's anchor from the plugin's own cache, and score_direction reads
+ * the same cache. The agent passes indices and labels — small, boring
+ * arguments a model gets right.
  *
- * Verified from the CLI on 2026-08-02: agent → tool → nested agent → structured
- * result, 11s, zero errors (docs/spikes/02-plugin-authoring.md §4b). What this
- * module tests is the part that CLI run could not: whether the same call works
- * over the VIEWER transport, where commands ride `daemon_execute` through Tauri.
- *
- * The one thing that could stop it: an agent declaring `plugins` needs a
- * reverse-attached CLI, or the API fails it `ClientObjectiveaiMcpUnavailable`
- * (objectiveai-api/src/agent/completions/client.rs:1044-1057). A CLI-spawned
- * agent qualifies. Whether a viewer tab does is the open question.
+ * The board the tab shows is DERIVED from the tool-event stream (arguments
+ * name the cell, results carry the document), so the display state is the
+ * broadcast, not a private copy.
  */
 import type { CommandExecutor } from "@objectiveai/sdk";
-import {
-  runAgent,
-  type AbortFlag,
-  type AgentProgress,
-  type ToolEvent,
-} from "./agent";
+import { runAgent, type AbortFlag, type AgentProgress, type ToolEvent } from "./agent";
 import { normalizeInvention, type Invention } from "./directions";
+import { cellKey, type CellStatus } from "./board";
 
 /** The trio must match the registration BYTE FOR BYTE. `v0.1.0` and `0.1.0`
  * are different keys, and a mismatch is silent — the plugin simply builds from
@@ -35,48 +28,151 @@ export const PHOSPHENE_PLUGIN = {
   version: "v0.1.0",
 } as const;
 
-const ORCHESTRATOR_PROMPT = `You explore design briefs using your phosphene tools.
+const ORCHESTRATOR_PROMPT = `You explore design briefs using your phosphene tools. A human is watching the board fill in as you work — your tool calls ARE the product; your prose is only a closing summary.
 
-Call phosphene_invent_directions exactly once, with the user's brief. Then report, in plain prose, the name and mood of each direction it returned. Do not invent directions yourself and do not call the tool more than once.`;
+The procedure:
+1. Call phosphene_invent_directions ONCE with the user's brief. It returns 3 directions and 3 shared states.
+2. Call phosphene_render_state once per (direction × state) — 9 calls. For each direction, render states[0] BEFORE its other two states (the tool pins the shared chrome from its own cache; you never pass HTML). Pass direction_index (0, 1 or 2), the full states array, and the label. If one render fails, continue with the rest.
+3. If — and only if — the user named judge models, call phosphene_score_direction once per (direction × judge model) after that direction's states are rendered. Report every judge's scores separately; never average across judges.
 
-export interface OrchestratedInvention {
-  invention: Invention;
-  /** What the agent said after its tools came back. */
-  summary: string;
+Then write a 2-3 sentence closing summary. Do not restate the documents or scores — the human already watched them arrive.`;
+
+export interface Exploration {
+  invention?: Invention;
+  /** `${directionIndex}:${label}` → cell state, derived from tool events. */
+  cells: Record<string, CellStatus>;
+  /** Score results in arrival order, verbatim from the tool. */
+  scores: ScoreEvent[];
+  /** The agent's closing prose. */
+  summary?: string;
   tools: ToolEvent[];
 }
 
+export interface ScoreEvent {
+  directionIndex: number;
+  judge: string;
+  scores: Record<string, number>;
+  notes: Record<string, string>;
+  facts: unknown;
+  statesSeen: string[];
+}
+
+/** Parse a streamed-then-complete JSON argument string. Undefined while the
+ * deltas are still arriving — callers treat that as "not yet", never an error. */
+function parseArgs(raw: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * Ask an agent to invent directions BY CALLING PHOSPHENE'S TOOL, and return
- * both the structured result and the agent's own account of it.
- *
- * The structured value is read out of the tool's own reply rather than parsed
- * from the agent's prose: the tool already returned typed JSON, and asking a
- * model to relay it faithfully is a step that can only lose information.
+ * Fold the tool-event stream into board state. Pure — called on every progress
+ * tick and once at the end, same answer both times for the same events.
  */
-export async function inventViaTools(
+export function deriveExploration(tools: ToolEvent[], summary?: string): Exploration {
+  const out: Exploration = { cells: {}, scores: [], tools, summary };
+
+  for (const event of tools) {
+    if (event.name.endsWith("invent_directions")) {
+      if (event.result) {
+        try {
+          out.invention = normalizeInvention(JSON.parse(event.result));
+        } catch {
+          // A malformed invention result will surface as the run failing to
+          // produce directions — not silently as an empty board.
+        }
+      }
+      continue;
+    }
+
+    if (event.name.endsWith("render_state")) {
+      const args = parseArgs(event.arguments);
+      const index = typeof args?.direction_index === "number" ? args.direction_index : undefined;
+      const label = typeof args?.label === "string" ? args.label : undefined;
+      if (index === undefined || label === undefined) continue; // args still streaming
+      const key = cellKey(index, label);
+      if (!event.result) {
+        out.cells[key] = { phase: "generating", streamed: 0 };
+      } else if (event.result.startsWith("tool call failed")) {
+        out.cells[key] = { phase: "failed", reason: event.result.slice(0, 240) };
+      } else {
+        try {
+          const rendered = JSON.parse(event.result) as { html?: string };
+          out.cells[key] =
+            typeof rendered.html === "string" && rendered.html.trim()
+              ? { phase: "done", html: rendered.html }
+              : { phase: "failed", reason: "render returned no html" };
+        } catch {
+          out.cells[key] = { phase: "failed", reason: "render result was not JSON" };
+        }
+      }
+      continue;
+    }
+
+    if (event.name.endsWith("score_direction") && event.result) {
+      if (event.result.startsWith("tool call failed")) continue; // judge died; panel survives
+      const args = parseArgs(event.arguments);
+      try {
+        const r = JSON.parse(event.result) as {
+          judge?: string;
+          scores?: Record<string, number>;
+          notes?: Record<string, string>;
+          facts?: unknown;
+          states_seen?: string[];
+        };
+        if (r.scores && r.judge) {
+          out.scores.push({
+            directionIndex:
+              typeof args?.direction_index === "number" ? args.direction_index : 0,
+            judge: r.judge,
+            scores: r.scores,
+            notes: r.notes ?? {},
+            facts: r.facts,
+            statesSeen: r.states_seen ?? [],
+          });
+        }
+      } catch {
+        // Same policy as cells: a bad result costs that result.
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Spawn the exploration agent and stream derived board state to the caller.
+ */
+export async function explore(
   executor: CommandExecutor,
   brief: string,
   onProgress?: (p: AgentProgress) => void,
   signal?: AbortFlag,
-): Promise<OrchestratedInvention> {
+): Promise<Exploration> {
   let latest: ToolEvent[] = [];
-
   const summary = await runAgent(
     executor,
     {
       system: ORCHESTRATOR_PROMPT,
       user: `Brief: ${brief}`,
-      // The orchestrator only routes and reports — the design judgement all
-      // happens inside the tools, so this can be cheap and near-deterministic.
+      // The orchestrator routes and reports; the design judgement happens
+      // inside the tools. Cheap and near-deterministic is right.
       model: "openai/gpt-4o-mini",
-      temperature: 0.2,
-      maxTokens: 1500,
+      temperature: 0.1,
+      // ~12 small tool calls plus a short summary. Arguments are indices and
+      // labels — the cache keeps documents out of this budget entirely.
+      maxTokens: 6000,
       plugins: [{ ...PHOSPHENE_PLUGIN }],
-      // A cold plugin image build runs minutes before the first call returns,
-      // and a build that OOMs takes ~4 minutes to say so.
+      // Nine sequential renders at ~40-60s each is the honest baseline, plus
+      // a cold image build on first run. Stall covers the longest single
+      // render; the timeout covers the whole exploration.
       timeoutSeconds: 1800,
-      stallSeconds: 600,
+      stallSeconds: 660,
     },
     (progress) => {
       latest = progress.tools;
@@ -85,22 +181,5 @@ export async function inventViaTools(
     signal,
   );
 
-  const invented = latest.find(
-    (tool) => tool.name.endsWith("invent_directions") && tool.result,
-  );
-  if (!invented?.result) {
-    throw new Error(
-      latest.length === 0
-        ? "the agent never called a tool"
-        : `no invent_directions result — the agent called ${latest
-            .map((t) => t.name)
-            .join(", ")}`,
-    );
-  }
-
-  return {
-    invention: normalizeInvention(JSON.parse(invented.result)),
-    summary,
-    tools: latest,
-  };
+  return deriveExploration(latest, summary);
 }

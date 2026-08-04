@@ -1,36 +1,35 @@
 /**
  * Phosphene's boot tab — declared in `objectiveai.json` as `viewer.tabs[0]`.
  *
- * ARCHITECTURE. The viewer half is a DISPLAY, not the application. It spawns
- * work as agent completions through the daemon and renders what the agent is
- * doing; it never reaches an upstream itself. See HANDOFF §"ARCHITECTURE
- * CHANGED".
+ * ARCHITECTURE. The tab is a DISPLAY. One button spawns ONE agent that
+ * declares phosphene's plugin and does all the work — inventing, rendering,
+ * judging — by calling phosphene's tools. Everything on screen below the
+ * composer is DERIVED from that agent's tool-event stream: the arguments name
+ * the cell, the results carry the documents and verdicts. The tab holds no
+ * work of its own; it is the human's window onto the agent.
  *
- * Two host contracts this file lives under (docs/platform/01-viewer.md):
+ * (The direct path — the tab orchestrating completions itself — existed while
+ * the tool lane was unproven and was deleted once it wasn't. Work the tab did
+ * privately could not be watched, resumed, or shared; work the agent does can.)
+ *
+ * Host contracts this file lives under (docs/platform/01-viewer.md):
  *   1. It receives ONE prop, `arguments`, and a manifest-declared boot tab is
- *      always opened with none — so at boot it is undefined. (`arguments` is a
- *      reserved binding in strict mode; destructure it under another name.)
+ *      always opened with none — so at boot it is undefined.
  *   2. Everything else comes from the harness: the daemon transport and the
  *      window's zoom. No theme, no router, no host state.
- *
- * It renders inside a document already carrying the viewer's own `app.css`.
- * We consume the viewer's `@theme` tokens where they mean the same thing to us,
- * but never its Tailwind utility classes — those exist only because the viewer
- * happens to use them today (spikes/01-calibration §C).
  */
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Client, functionsListExecute } from "@objectiveai/sdk";
 import { transport } from "./transport";
-import { inventDirections, type Direction, type Invention } from "./lib/directions";
-import { inventViaTools } from "./lib/orchestrator";
-import type { ToolEvent } from "./lib/agent";
+import type { Direction } from "./lib/directions";
+import { ARTBOARD_HEIGHT, ARTBOARD_WIDTH, cellKey, type CellStatus } from "./lib/board";
 import {
-  ARTBOARD_HEIGHT,
-  ARTBOARD_WIDTH,
-  cellKey,
-  generateBoard,
-  type CellStatus,
-} from "./lib/generate";
+  deriveExploration,
+  explore,
+  type Exploration,
+  type ScoreEvent,
+} from "./lib/orchestrator";
+import type { ToolEvent } from "./lib/agent";
 
 interface TabProps {
   arguments?: unknown;
@@ -43,16 +42,9 @@ type Health =
 
 type Run =
   | { phase: "idle" }
-  | {
-      phase: "inventing";
-      brief: string;
-      aih?: string;
-      streamed: number;
-      /** Populated only on the via-tools path. */
-      tools?: ToolEvent[];
-    }
-  | { phase: "done"; brief: string; invention: Invention; tools?: ToolEvent[] }
-  | { phase: "failed"; brief: string; reason: string };
+  | { phase: "exploring"; brief: string; aih?: string; exploration: Exploration }
+  | { phase: "done"; brief: string; exploration: Exploration }
+  | { phase: "failed"; brief: string; reason: string; exploration?: Exploration };
 
 interface Zoomed {
   direction: Direction;
@@ -64,12 +56,12 @@ interface Zoomed {
  * design judged at a different width is a different design. */
 const THUMB_SCALE = 0.55;
 
+const DIMENSIONS = ["craft", "distinctiveness", "fitness", "coherence"] as const;
+
 /**
- * Prove the daemon is REACHABLE, not merely that a client object constructed.
- * `Client.viewer(transport)` is a synchronous constructor and succeeds whether
- * or not anything is listening, so this makes a real round trip: `functions
- * list` is the cheapest read-only command that exercises SDK → Tauri IPC →
- * `daemon_execute` → daemon → response stream. An empty result is healthy.
+ * Prove the daemon is REACHABLE, not merely that a client object constructed:
+ * `functions list` is the cheapest read-only round trip through the whole
+ * SDK → Tauri IPC → daemon path. An empty result is healthy.
  */
 async function checkDaemon(): Promise<Health> {
   const started = performance.now();
@@ -89,10 +81,8 @@ async function checkDaemon(): Promise<Health> {
       break;
     }
     const roundTripMs = Math.round(performance.now() - started);
-    // console.* is the sanctioned path to the viewer's log inbox — the host
-    // injects a capture script into every webview. "Did phosphene come up and
-    // could it reach the daemon" is exactly what belongs there when someone
-    // reports a blank tab.
+    // console.* is the sanctioned path to the viewer's log inbox — exactly
+    // where "did phosphene come up" belongs when someone reports a blank tab.
     console.info(`phosphene: ready · daemon round trip ${roundTripMs}ms`);
     return { state: "ready", roundTripMs };
   } catch (error) {
@@ -102,16 +92,12 @@ async function checkDaemon(): Promise<Health> {
 }
 
 function DirectionCard({ direction }: { direction: Direction }) {
-  const [bg, surface, accent, text, muted] = direction.palette;
   return (
     <article className="ph-card">
       <header className="ph-card-head">
         <h3 className="ph-card-name">{direction.name}</h3>
         {direction.mood && <span className="ph-card-mood">{direction.mood}</span>}
       </header>
-
-      {/* The legacy app invented palettes, fed them to generation, and rendered
-          them nowhere (docs/legacy §8). Showing them is the point of a card. */}
       <div className="ph-swatches" aria-label="palette">
         {direction.palette.map((hex, i) => (
           <span
@@ -122,34 +108,16 @@ function DirectionCard({ direction }: { direction: Direction }) {
           />
         ))}
       </div>
-
       <p className="ph-card-desc">{direction.description}</p>
-
-      {/* A miniature of the direction, drawn with its own colours — what stands
-          in for the real thing until the board is rendered. */}
-      <div className="ph-mini" style={{ backgroundColor: bg, borderColor: muted }}>
-        <div className="ph-mini-bar" style={{ backgroundColor: surface }}>
-          <span className="ph-mini-dot" style={{ backgroundColor: accent }} />
-        </div>
-        <div className="ph-mini-line" style={{ backgroundColor: text, width: "62%" }} />
-        <div className="ph-mini-line" style={{ backgroundColor: muted, width: "88%" }} />
-        <div className="ph-mini-line" style={{ backgroundColor: muted, width: "74%" }} />
-        <div className="ph-mini-cta" style={{ backgroundColor: accent }} />
-      </div>
-
       <p className="ph-card-type">{direction.typography}</p>
     </article>
   );
 }
 
 /**
- * One cell of the board.
- *
- * `sandbox=""` — the empty allow-list — is what makes rendering model-authored
- * markup safe: no scripts, no forms, no popups, no top-level navigation, and an
- * opaque origin, so the document cannot reach this tab, the transport, or the
- * daemon. The generation prompt also forbids JavaScript; the sandbox is what
- * ENFORCES it, and the prompt is not a security boundary.
+ * One cell. `sandbox=""` — the empty allow-list — is what makes rendering
+ * model-authored markup safe: no scripts, no forms, opaque origin. The
+ * generation prompt forbids JavaScript; the sandbox ENFORCES it.
  */
 function Artboard({
   status,
@@ -189,12 +157,54 @@ function Artboard({
       )}
       <span className="ph-artboard-note">
         {phase === "pending" && "queued"}
-        {status?.phase === "generating" &&
-          (status.streamed > 0
-            ? `${(status.streamed / 1024).toFixed(1)} KB`
-            : "starting…")}
+        {status?.phase === "generating" && "the agent is rendering…"}
         {status?.phase === "failed" && status.reason}
       </span>
+    </div>
+  );
+}
+
+/** A direction's judge verdicts, side by side. Never averaged — with vote
+ * distributions gone, the spread between judges IS the signal. */
+function ScorePanel({ scores }: { scores: ScoreEvent[] }) {
+  if (scores.length === 0) return null;
+  return (
+    <div className="ph-scores">
+      <table className="ph-score-table">
+        <thead>
+          <tr>
+            <th>judge</th>
+            {DIMENSIONS.map((d) => (
+              <th key={d}>{d}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {scores.map((s, i) => (
+            <tr key={`${s.judge}-${i}`}>
+              <td className="ph-score-judge">{s.judge.split("/").pop()}</td>
+              {DIMENSIONS.map((d) => (
+                <td key={d} className="ph-score-cell">
+                  {s.scores[d] !== undefined ? s.scores[d].toFixed(2) : "—"}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {scores.map((s, i) => (
+        <details className="ph-score-notes" key={`notes-${s.judge}-${i}`}>
+          <summary>
+            why, per {s.judge.split("/").pop()}
+            {s.statesSeen.length > 0 && ` · saw ${s.statesSeen.length} state(s)`}
+          </summary>
+          {DIMENSIONS.filter((d) => s.notes[d]).map((d) => (
+            <p key={d}>
+              <strong>{d}.</strong> {s.notes[d]}
+            </p>
+          ))}
+        </details>
+      ))}
     </div>
   );
 }
@@ -203,9 +213,6 @@ export default function Phosphene({ arguments: _args }: TabProps) {
   const [health, setHealth] = useState<Health>({ state: "connecting" });
   const [brief, setBrief] = useState("");
   const [run, setRun] = useState<Run>({ phase: "idle" });
-  const [cells, setCells] = useState<Record<string, CellStatus>>({});
-  const [rendering, setRendering] = useState(false);
-  const [boardError, setBoardError] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState<Zoomed | null>(null);
   const abort = useRef<{ aborted: boolean }>({ aborted: false });
 
@@ -216,6 +223,9 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     });
     return () => {
       disposed = true;
+      // KNOWN LIMIT: breaking the stream cancels the daemon-side run, so
+      // closing the tab kills the agent mid-work. The fix is reattach-by-AIH
+      // (agentsInstancesListener) — a future slice; noted rather than hidden.
       abort.current.aborted = true;
     };
   }, []);
@@ -229,102 +239,63 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     return () => document.removeEventListener("keydown", onKey);
   }, [zoomed]);
 
-  /**
-   * `viaTools` is the architecture we are moving to: the tab spawns ONE agent
-   * that declares phosphene's plugin, and that agent calls phosphene's tools.
-   * The direct path stays alongside it until the tool path is proven over the
-   * viewer transport — they should produce the same shape of answer.
-   */
-  const invent = useCallback(
-    async (viaTools: boolean) => {
+  const start = useCallback(async () => {
     const text = brief.trim();
-    if (text.length === 0 || run.phase === "inventing" || rendering) return;
+    if (text.length === 0 || run.phase === "exploring") return;
     abort.current = { aborted: false };
     const signal = abort.current;
-    setRun({ phase: "inventing", brief: text, streamed: 0 });
-    // A new brief invalidates the old board rather than leaving artboards from
-    // a different question sitting under new directions.
-    setCells({});
-    setBoardError(null);
-    const onProgress = (p: { aih?: string; streamed: number; tools?: ToolEvent[] }) =>
-      setRun((prev) =>
-        prev.phase === "inventing"
-          ? { ...prev, aih: p.aih, streamed: p.streamed, tools: p.tools }
-          : prev,
-      );
-
+    setRun({ phase: "exploring", brief: text, exploration: deriveExploration([]) });
     try {
       const client = Client.viewer(await transport());
-      if (viaTools) {
-        const result = await inventViaTools(client, text, onProgress, signal);
-        console.info(
-          `phosphene: via tools — ${result.tools.map((t) => t.name).join(", ")}`,
-        );
-        if (!signal.aborted) {
-          setRun({
-            phase: "done",
-            brief: text,
-            invention: result.invention,
-            tools: result.tools,
-          });
-        }
-      } else {
-        const invention = await inventDirections(client, text, onProgress, signal);
-        if (!signal.aborted) setRun({ phase: "done", brief: text, invention });
-      }
-    } catch (error) {
-      console.error("phosphene: invention failed", error);
-      if (!signal.aborted) {
-        setRun({ phase: "failed", brief: text, reason: String(error).slice(0, 300) });
-      }
-    }
-    },
-    [brief, run.phase, rendering],
-  );
-
-  const render = useCallback(async () => {
-    if (run.phase !== "done" || rendering) return;
-    const { invention } = run;
-    abort.current = { aborted: false };
-    const signal = abort.current;
-
-    const initial: Record<string, CellStatus> = {};
-    for (let i = 0; i < invention.directions.length; i++) {
-      for (const label of invention.states) {
-        initial[cellKey(i, label)] = { phase: "pending" };
-      }
-    }
-    setCells(initial);
-    setBoardError(null);
-    setRendering(true);
-    try {
-      const client = Client.viewer(await transport());
-      await generateBoard(
+      const exploration = await explore(
         client,
-        invention,
-        (key, status) => setCells((prev) => ({ ...prev, [key]: status })),
+        text,
+        (p) =>
+          setRun((prev) =>
+            prev.phase === "exploring"
+              ? { ...prev, aih: p.aih, exploration: deriveExploration(p.tools) }
+              : prev,
+          ),
         signal,
       );
+      console.info(
+        `phosphene: exploration done — ${exploration.tools.length} tool calls`,
+      );
+      if (!signal.aborted) setRun({ phase: "done", brief: text, exploration });
     } catch (error) {
-      console.error("phosphene: board failed", error);
-      if (!signal.aborted) setBoardError(String(error).slice(0, 300));
-    } finally {
-      setRendering(false);
+      console.error("phosphene: exploration failed", error);
+      if (!signal.aborted) {
+        setRun((prev) => ({
+          phase: "failed",
+          brief: text,
+          reason: String(error).slice(0, 300),
+          // Keep whatever the board had — a failed run with 7 rendered cells
+          // should show 7 cells and the error, not a blank page.
+          exploration: prev.phase === "exploring" ? prev.exploration : undefined,
+        }));
+      }
     }
-  }, [run, rendering]);
+  }, [brief, run.phase]);
 
-  const busy = run.phase === "inventing";
-  const cellCount = Object.keys(cells).length;
+  const busy = run.phase === "exploring";
+  const exploration =
+    run.phase === "idle" ? undefined : run.exploration;
+  const invention = exploration?.invention;
+  const cells = exploration?.cells ?? {};
   const doneCount = Object.values(cells).filter((c) => c.phase === "done").length;
   const failedCount = Object.values(cells).filter((c) => c.phase === "failed").length;
+  const totalCells = invention
+    ? invention.directions.length * invention.states.length
+    : 0;
 
   return (
     <div className="phosphene">
       <header className="phosphene-header">
         <h1 className="phosphene-title">phosphene</h1>
         <p className="phosphene-subtitle">
-          Describe a brief. Phosphene invents contrasting design directions, then
-          renders and judges them.
+          Describe a brief. Your agent invents contrasting design directions,
+          renders them across shared states, and — if you name judge models —
+          scores them. You watch it work.
         </p>
       </header>
 
@@ -341,153 +312,106 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           placeholder="A dating app where pickles match on brine compatibility"
           onChange={(e) => setBrief(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void invent(false);
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void start();
           }}
         />
         <div className="ph-composer-row">
           <button
             type="button"
             className="ph-button"
-            onClick={() => void invent(false)}
-            disabled={
-              busy || rendering || brief.trim().length === 0 || health.state !== "ready"
-            }
+            onClick={() => void start()}
+            disabled={busy || brief.trim().length === 0 || health.state !== "ready"}
           >
-            {busy ? "inventing…" : "invent directions"}
-          </button>
-          {/* The same result, reached the way the platform intends: an agent
-              calling phosphene's tools, with this tab as the display. */}
-          <button
-            type="button"
-            className="ph-button ph-button--ghost"
-            onClick={() => void invent(true)}
-            disabled={
-              busy || rendering || brief.trim().length === 0 || health.state !== "ready"
-            }
-            title="Spawn an agent that declares phosphene's plugin and calls its tools"
-          >
-            via tools
+            {busy ? "exploring…" : "explore"}
           </button>
           <span className="ph-hint">⌘↵</span>
         </div>
       </section>
 
-      {run.phase === "inventing" && (
-        <section className="ph-progress" aria-live="polite">
-          <span className="phosphene-dot phosphene-dot--connecting" aria-hidden="true" />
-          <span>
-            inventing directions
-            {run.streamed > 0 && ` · ${(run.streamed / 1024).toFixed(1)} KB streamed`}
-          </span>
-          {run.aih && <code className="ph-aih">{run.aih.split("/").pop()}</code>}
+      {/* What the agent is doing with its tools — the display half of the
+          architecture, and the only place a human can see it happen. */}
+      {exploration && exploration.tools.length > 0 && (
+        <section className="ph-tools" aria-live="polite">
+          {exploration.tools.slice(-8).map((tool: ToolEvent, i: number) => (
+            <div className="ph-tool" key={`${tool.name}-${i}`}>
+              <span
+                className={`phosphene-dot phosphene-dot--${tool.result ? "ready" : "connecting"}`}
+                aria-hidden="true"
+              />
+              <code className="ph-tool-name">{tool.name || "…"}</code>
+              <span className="ph-tool-state">
+                {tool.result
+                  ? `${(tool.result.length / 1024).toFixed(1)} KB back`
+                  : "calling…"}
+              </span>
+            </div>
+          ))}
+          {run.phase === "exploring" && run.aih && (
+            <code className="ph-aih">{run.aih.split("/").pop()}</code>
+          )}
         </section>
       )}
 
-      {/* What the agent is doing with its tools. This is the display half of
-          the architecture — the tab's actual job once the work moves behind
-          tools, and the only place a human can see it happening. */}
-      {(run.phase === "inventing" || run.phase === "done") &&
-        (run.tools?.length ?? 0) > 0 && (
-          <section className="ph-tools" aria-live="polite">
-            {run.tools?.map((tool, i) => (
-              <div className="ph-tool" key={`${tool.name}-${i}`}>
-                <span
-                  className={`phosphene-dot phosphene-dot--${tool.result ? "ready" : "connecting"}`}
-                  aria-hidden="true"
-                />
-                <code className="ph-tool-name">{tool.name || "…"}</code>
-                <span className="ph-tool-state">
-                  {tool.result
-                    ? `${(tool.result.length / 1024).toFixed(1)} KB back`
-                    : "calling…"}
-                </span>
-              </div>
-            ))}
-          </section>
-        )}
-
       {run.phase === "failed" && (
         <section className="ph-error" role="alert">
-          <strong>invention failed</strong>
+          <strong>exploration failed</strong>
           <span>{run.reason}</span>
         </section>
       )}
 
-      {run.phase === "done" && (
+      {invention && (
         <section className="ph-results">
           <div className="ph-results-head">
             <h2 className="ph-results-title">
-              {run.invention.directions.length} directions
+              {invention.directions.length} directions
             </h2>
-            {run.invention.states.length > 0 && (
+            {invention.states.length > 0 && (
               <p className="ph-states">
                 states:{" "}
-                {run.invention.states.map((s) => (
+                {invention.states.map((s) => (
                   <span key={s} className="ph-state">
                     {s}
                   </span>
                 ))}
               </p>
             )}
-            <button
-              type="button"
-              className="ph-button"
-              onClick={() => void render()}
-              disabled={rendering || run.invention.states.length === 0}
-            >
-              {rendering
-                ? `rendering ${doneCount + failedCount}/${cellCount}…`
-                : cellCount > 0
-                  ? "render again"
-                  : `render ${run.invention.directions.length * run.invention.states.length} artboards`}
-            </button>
+            {totalCells > 0 && (
+              <p className="ph-states">
+                <span>
+                  {doneCount}/{totalCells} rendered
+                  {failedCount > 0 && ` · ${failedCount} failed`}
+                </span>
+              </p>
+            )}
           </div>
           <div className="ph-grid">
-            {run.invention.directions.map((d, i) => (
+            {invention.directions.map((d, i) => (
               <DirectionCard key={`${d.name}-${i}`} direction={d} />
             ))}
           </div>
         </section>
       )}
 
-      {boardError && (
-        <section className="ph-error" role="alert">
-          <strong>render failed</strong>
-          <span>{boardError}</span>
-        </section>
-      )}
-
-      {run.phase === "done" && cellCount > 0 && (
+      {invention && invention.states.length > 0 && (
         <section className="ph-board">
-          <div className="ph-results-head">
-            <h2 className="ph-results-title">board</h2>
-            <p className="ph-states">
-              <span>
-                {doneCount}/{cellCount} rendered
-                {failedCount > 0 && ` · ${failedCount} failed`}
-              </span>
-            </p>
-          </div>
-
-          {/* Directions across, shared states down — the whole point of pinning
-              one set of states at invention time is that a row compares like
-              with like. */}
+          {/* Directions across, shared states down — one set of states is what
+              makes a row compare like with like. */}
           <div
             className="ph-board-grid"
             style={{
-              gridTemplateColumns: `max-content repeat(${run.invention.directions.length}, max-content)`,
+              gridTemplateColumns: `max-content repeat(${invention.directions.length}, max-content)`,
             }}
           >
             <span aria-hidden="true" />
-            {run.invention.directions.map((d, i) => (
+            {invention.directions.map((d, i) => (
               <div key={`col-${i}`} className="ph-board-col">
                 {d.name}
               </div>
             ))}
-            {run.invention.states.map((label) => (
+            {invention.states.map((label) => (
               <Fragment key={label}>
                 <div className="ph-board-row">{label}</div>
-                {run.invention.directions.map((d, i) => (
+                {invention.directions.map((d, i) => (
                   <Artboard
                     key={cellKey(i, label)}
                     status={cells[cellKey(i, label)]}
@@ -504,6 +428,27 @@ export default function Phosphene({ arguments: _args }: TabProps) {
               </Fragment>
             ))}
           </div>
+
+          {/* Judgment as a surface, not a number: per direction, every judge's
+              scores side by side, plus every written why. */}
+          {(exploration?.scores.length ?? 0) > 0 &&
+            invention.directions.map((d, i) => {
+              const forDirection =
+                exploration?.scores.filter((s) => s.directionIndex === i) ?? [];
+              if (forDirection.length === 0) return null;
+              return (
+                <div key={`scores-${i}`} className="ph-direction-scores">
+                  <h3 className="ph-results-title">{d.name} — judged</h3>
+                  <ScorePanel scores={forDirection} />
+                </div>
+              );
+            })}
+        </section>
+      )}
+
+      {run.phase === "done" && exploration?.summary && (
+        <section className="ph-progress">
+          <span>{exploration.summary}</span>
         </section>
       )}
 

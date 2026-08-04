@@ -497,6 +497,79 @@
   padding: var(--ph-spacing-1) var(--ph-spacing-3);
 }
 
+/* ── Judgment as a surface ────────────────────────────────────────────── */
+
+.ph-direction-scores {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-3);
+  margin-top: var(--ph-spacing-5);
+  max-width: 720px;
+}
+
+.ph-scores {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-3);
+}
+
+.ph-score-table {
+  border-collapse: collapse;
+  font-size: var(--ph-text-body);
+  line-height: var(--ph-text-body--line-height);
+}
+
+.ph-score-table th {
+  font-size: var(--ph-text-label);
+  line-height: var(--ph-text-label--line-height);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-text-muted);
+  font-weight: 500;
+  text-align: left;
+  padding: var(--ph-spacing-1) var(--ph-spacing-4) var(--ph-spacing-1) 0;
+  border-bottom: 1px solid var(--ph-color-border-strong);
+}
+
+.ph-score-table td {
+  padding: var(--ph-spacing-2) var(--ph-spacing-4) var(--ph-spacing-2) 0;
+  border-bottom: 1px solid var(--ph-color-border-subtle);
+}
+
+.ph-score-judge {
+  font-family: ui-monospace, monospace;
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-secondary);
+}
+
+/* Scores are the one place the score scale carries meaning. */
+.ph-score-cell {
+  font-size: var(--ph-text-score);
+  line-height: var(--ph-text-score--line-height);
+  color: var(--ph-color-score-mid);
+  font-variant-numeric: tabular-nums;
+}
+
+.ph-score-notes {
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+  color: var(--ph-color-text-secondary);
+  border: 1px solid var(--ph-color-border-subtle);
+  border-radius: var(--ph-radius-md);
+  padding: var(--ph-spacing-2) var(--ph-spacing-3);
+}
+
+.ph-score-notes summary {
+  cursor: pointer;
+  color: var(--ph-color-text-muted);
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+}
+
+.ph-score-notes p { margin-top: var(--ph-spacing-2); }
+.ph-score-notes strong { color: var(--ph-color-text-primary); }
+
 /* ── Full-size view ───────────────────────────────────────────────────── */
 
 .ph-zoom {

@@ -262,9 +262,11 @@ pub struct RenderArgs {
     pub states: Vec<String>,
     /// Which of `states` to render now.
     pub label: String,
-    /// The anchor state's rendered HTML, when this is not the anchor itself.
-    /// Supplying it is what keeps a direction's states looking like one
-    /// product; omitting it costs coherence, not correctness.
+    /// Normally OMIT this. When rendering a non-anchor state, the tool reuses
+    /// the direction's already-rendered first state from its own cache — the
+    /// anchor's markup pins the shared chrome so the states read as one
+    /// product, and it must never be echoed through the agent's context to
+    /// get there. Pass this only to override the cache with different markup.
     #[serde(default)]
     pub anchor_html: Option<String>,
 }
@@ -1140,12 +1142,13 @@ impl Plugin {
     #[rmcp::tool(
         description = "Render ONE state of ONE design direction as a complete, \
                        self-contained 400x720 XHTML document — no external resources, \
-                       no JavaScript. Render a direction's FIRST state with no \
-                       anchor_html, then pass the document it returns as anchor_html \
-                       for that direction's remaining states: it pins the shared \
-                       chrome (nav, spacing scale, component styling) so the states \
-                       read as one product. Different directions are independent and \
-                       can be rendered in parallel."
+                       no JavaScript. Render a direction's FIRST state first; when \
+                       you then render its remaining states, the tool automatically \
+                       reuses that first document from its own cache to pin the \
+                       shared chrome (nav, spacing scale, component styling), so the \
+                       states read as one product. You never pass HTML between calls. \
+                       Different directions are independent — order within a \
+                       direction, anchor first, is all that matters."
     )]
     async fn render_state(
         &self,
@@ -1160,6 +1163,22 @@ impl Plugin {
         } else {
             args.states.clone()
         };
+
+        // The anchor: explicit override first, else the direction's cached
+        // first state. Pinning happens plugin-side so ~9 KB of markup never
+        // rides through the orchestrating agent's context — the same
+        // cache-not-context rule score_direction lives by.
+        let anchor_html: Option<String> = args.anchor_html.clone().or_else(|| {
+            let anchor_label = states.first()?;
+            if label == anchor_label {
+                return None; // the anchor itself renders unpinned
+            }
+            let boards = self.boards.lock().expect("boards mutex poisoned");
+            boards
+                .get(&args.direction_index)
+                .and_then(|cached| cached.artboards.get(anchor_label))
+                .cloned()
+        });
 
         let slots = ["bg", "surface", "accent", "text", "muted"];
         let swatches = slots
@@ -1187,7 +1206,7 @@ impl Plugin {
         );
 
         let text = run_agent(
-            &render_system_prompt(&states, label, args.anchor_html.as_deref()),
+            &render_system_prompt(&states, label, anchor_html.as_deref()),
             &user,
             GENERATION_UPSTREAM,
             GENERATION_MODEL,
@@ -1351,12 +1370,11 @@ async fn main() -> Result<Infallible, std::io::Error> {
             .with_instructions(
                 "Explore a design brief visually, then judge it. Call \
                  invent_directions ONCE to get 3 \
-                 contrasting directions and 3 shared states. Then, for each direction, \
-                 call render_state for the FIRST state with no anchor_html, and pass \
-                 the HTML it returns as anchor_html when rendering that direction's \
-                 remaining states. Directions are independent — render them in \
-                 parallel. Return the documents as they come back; a human is looking \
-                 at them. To judge, call score_direction once per (direction x \
+                 contrasting directions and 3 shared states. Then call render_state \
+                 once per (direction x state) — the FIRST state of each direction \
+                 before its others; the tool pins the shared chrome from its own \
+                 cache, so you never pass HTML between calls. Directions are \
+                 independent. A human is watching the board fill in as you work. To judge, call score_direction once per (direction x \
                  judge model) — you and your human choose the judges; pick models \
                  that genuinely differ, report every judge's scores separately, \
                  and NEVER average across judges: the disagreement is the point.",

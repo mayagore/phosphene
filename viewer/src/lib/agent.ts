@@ -159,12 +159,24 @@ export async function runAgent(
   const parts = new Map<number, string>();
   // Tool calls arrive as DELTAS on assistant messages, reassembled by their own
   // `index` — a separate space from the message index. Confirmed on the wire.
-  const tools = new Map<number, ToolEvent>();
+  //
+  // CALL INDEXES RESTART EVERY TURN. A multi-turn run reuses index 0 for its
+  // next turn's first call, so one Map keyed by index would concatenate two
+  // different calls into garbage (observed live: a 30-call run produced one
+  // event named "phosphene_render_statephosphene_score_direction…"). Hence
+  // two structures: in-flight calls keyed by index, moved to `completed` when
+  // their result lands — which is what frees the index for the next turn.
+  // Results attach oldest-first because the run loop dispatches sequentially.
+  const completed: ToolEvent[] = [];
+  const inflight = new Map<number, ToolEvent>();
   let aih: string | undefined;
   const snapshot = (): AgentProgress => ({
     aih,
     streamed: [...parts.values()].reduce((n, s) => n + s.length, 0),
-    tools: [...tools.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t),
+    tools: [
+      ...completed,
+      ...[...inflight.entries()].sort((a, b) => a[0] - b[0]).map(([, t]) => t),
+    ],
   });
 
   const stream = agentsSpawnExecuteStreaming(executor, request as never);
@@ -221,21 +233,25 @@ export async function runAgent(
         // never a default branch.
         if (m.role === "tool") {
           if (typeof m.content === "string") {
-            // Answers come back in call order, so fill the first unanswered.
-            const pending = [...tools.entries()]
-              .sort((a, b) => a[0] - b[0])
-              .find(([, t]) => t.result === undefined);
-            if (pending) pending[1].result = m.content;
+            // Answers come back in call order: attach to the oldest
+            // unanswered call and RETIRE it, freeing its index for the
+            // next turn.
+            const oldest = [...inflight.entries()].sort((a, b) => a[0] - b[0])[0];
+            if (oldest) {
+              oldest[1].result = m.content;
+              completed.push(oldest[1]);
+              inflight.delete(oldest[0]);
+            }
           }
           continue;
         }
         if (m.role !== "assistant") continue;
         for (const call of m.tool_calls ?? []) {
           const i = call.index ?? 0;
-          const event = tools.get(i) ?? { name: "", arguments: "" };
+          const event = inflight.get(i) ?? { name: "", arguments: "" };
           if (call.function?.name) event.name += call.function.name;
           if (call.function?.arguments) event.arguments += call.function.arguments;
-          tools.set(i, event);
+          inflight.set(i, event);
         }
         if (typeof m.content !== "string") continue;
         const i = m.index ?? 0;
@@ -255,7 +271,12 @@ export async function runAgent(
     .join("");
   // An agent that only called tools and never spoke has still done work, so
   // silence is only a failure when nothing happened at all.
-  if (text.trim().length === 0 && tools.size === 0 && !signal?.aborted) {
+  if (
+    text.trim().length === 0 &&
+    completed.length === 0 &&
+    inflight.size === 0 &&
+    !signal?.aborted
+  ) {
     // Distinguish "model said nothing" from "we cannot parse" — the legacy app
     // reported the former as a parser bug for weeks.
     throw new Error("the agent returned an empty response");
