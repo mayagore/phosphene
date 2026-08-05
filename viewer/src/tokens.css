@@ -66,6 +66,10 @@
   /* radius scale */
   --ph-radius-sm: 6px; --ph-radius-md: 10px; --ph-radius-lg: 14px; --ph-radius-xl: 20px; --ph-radius-pill: 999px;
 
+  /* shell — panel widths (media queries in phosphene.css step these down) */
+  --ph-rail-w: 360px;
+  --ph-insp-w: 360px;
+
   /* type ramp — Inter */
   --ph-font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --ph-text-title: 19px;     --ph-text-title--line-height: 26px;

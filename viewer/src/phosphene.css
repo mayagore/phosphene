@@ -20,56 +20,122 @@
  * them, and an upstream refactor would delete them with no error on our side.
  * Everything below is plain CSS against our own class names.
  * (Measured in docs/spikes/01-calibration.md §C.)
+ *
+ * ── Shape ────────────────────────────────────────────────────────────────
+ * The chat concept (design-legacy/, docs/design.md): three panels. Section
+ * order below follows DOM order — shell, primitives, rail, center, inspector,
+ * zoom, responsive.
  */
 
+@import "./fonts.css";
 @import "./tokens.css";
 
-/* No max-width on the root: the board is as wide as (directions × 400px) and
- * must not be squeezed — a design judged at a reflowed width is a different
- * design. Prose measure is constrained per-block instead. */
-.phosphene {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ph-spacing-6);
-  padding: var(--ph-spacing-7);
-  font-family: var(--ph-font-sans);
+/* ── Shell ────────────────────────────────────────────────────────────────
+ * The tab owns its whole viewport: rail / board / inspector. Each panel
+ * scrolls internally; the center scrolls BOTH axes because the board is
+ * (directions × 400px) wide and must never be squeezed — a design judged at
+ * a reflowed width is a different design. */
+
+.ph-root {
+  display: grid;
+  grid-template-columns: var(--ph-rail-w) minmax(0, 1fr) var(--ph-insp-w);
+  height: 100vh;
+  overflow: hidden;
+  background: var(--ph-color-surface-canvas);
   color: var(--ph-color-text-primary);
-}
-
-.phosphene-header {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ph-spacing-2);
-  max-width: 720px;
-}
-
-.phosphene-title {
-  font-size: var(--ph-text-title);
-  line-height: var(--ph-text-title--line-height);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.phosphene-subtitle {
+  font-family: var(--ph-font-sans);
   font-size: var(--ph-text-body);
   line-height: var(--ph-text-body--line-height);
-  color: var(--ph-color-text-secondary);
-  max-width: 52ch;
 }
 
-.phosphene-status {
-  display: flex;
-  align-items: center;
-  gap: var(--ph-spacing-2);
-  padding: var(--ph-spacing-3) var(--ph-spacing-4);
-  border: 1px solid var(--ph-color-border-subtle);
-  border-radius: var(--ph-radius-md);
-  background: var(--ph-color-surface-card);
+/* ── Primitives ───────────────────────────────────────────────────────── */
+
+.ph-eyebrow {
+  font-size: var(--ph-text-label);
+  line-height: var(--ph-text-label--line-height);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-text-muted);
+}
+
+.ph-chip {
+  font: inherit;
   font-size: var(--ph-text-label);
   line-height: var(--ph-text-label--line-height);
   letter-spacing: var(--ph-text-label--letter-spacing);
   color: var(--ph-color-text-secondary);
-  width: fit-content;
+  background: transparent;
+  border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-pill);
+  padding: var(--ph-spacing-1) var(--ph-spacing-3);
+  white-space: nowrap;
+}
+
+.ph-chip--action {
+  cursor: pointer;
+}
+
+.ph-chip--action:hover {
+  color: var(--ph-color-text-primary);
+  background: var(--ph-color-surface-raised);
+}
+
+.ph-button {
+  font: inherit;
+  font-size: var(--ph-text-body);
+  color: var(--ph-color-accent-on);
+  background: var(--ph-color-accent-default);
+  border: none;
+  border-radius: var(--ph-radius-sm);
+  padding: var(--ph-spacing-2) var(--ph-spacing-4);
+  cursor: pointer;
+}
+
+.ph-button:hover:not(:disabled) { background: var(--ph-color-accent-hover); }
+.ph-button:active:not(:disabled) { background: var(--ph-color-accent-press); }
+.ph-button:disabled { opacity: 0.45; cursor: default; }
+
+/* Secondary action. Same size and rhythm as the primary, without claiming the
+ * accent — the two do the same thing by different routes. */
+.ph-button--ghost {
+  color: var(--ph-color-text-secondary);
+  background: transparent;
+  border: 1px solid var(--ph-color-border-strong);
+}
+
+.ph-button--ghost:hover:not(:disabled) {
+  color: var(--ph-color-text-primary);
+  background: var(--ph-color-surface-raised);
+}
+
+.ph-button--ghost:active:not(:disabled) {
+  background: var(--ph-color-surface-sunken);
+}
+
+.ph-input {
+  font-family: inherit;
+  font-size: var(--ph-text-body);
+  line-height: var(--ph-text-body--line-height);
+  color: var(--ph-color-text-primary);
+  background: var(--ph-color-surface-sunken);
+  border: 1px solid var(--ph-color-border-subtle);
+  border-radius: var(--ph-radius-md);
+  padding: var(--ph-spacing-3);
+  resize: vertical;
+  width: 100%;
+}
+
+.ph-input:focus-visible {
+  outline: none;
+  border-color: var(--ph-color-accent-default);
+}
+
+.ph-input::placeholder { color: var(--ph-color-text-muted); }
+.ph-input:disabled { opacity: 0.6; }
+
+.ph-hint {
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-muted);
 }
 
 /* The status dot is the one place colour carries meaning here. Accent means
@@ -97,12 +163,6 @@
   box-shadow: 0 0 0 3px var(--ph-color-accent-soft);
 }
 
-.phosphene-note {
-  font-size: var(--ph-text-caption);
-  line-height: var(--ph-text-caption--line-height);
-  color: var(--ph-color-text-muted);
-}
-
 @keyframes phosphene-pulse {
   0%,
   100% {
@@ -113,109 +173,195 @@
   }
 }
 
-/* The viewer's app.css kills animation under prefers-reduced-motion with
- * !important, so this is belt-and-braces for a standalone render. */
-@media (prefers-reduced-motion: reduce) {
-  .phosphene-dot--connecting {
-    animation: none;
-  }
-}
+/* ── Rail — the agent transcript ──────────────────────────────────────── */
 
-/* ── Composer ─────────────────────────────────────────────────────────── */
-
-.ph-composer {
+.ph-rail {
   display: flex;
   flex-direction: column;
-  gap: var(--ph-spacing-2);
-  max-width: 640px;
+  gap: var(--ph-spacing-3);
+  min-height: 0;
+  padding: var(--ph-spacing-4);
+  border-right: 1px solid var(--ph-color-border-subtle);
+  background: linear-gradient(
+    180deg,
+    var(--ph-color-chrome-grad-top) 0%,
+    var(--ph-color-chrome-grad-mid) 45%,
+    var(--ph-color-chrome-grad-bottom) 100%
+  );
 }
 
-.ph-label {
-  font-size: var(--ph-text-label);
-  line-height: var(--ph-text-label--line-height);
-  letter-spacing: var(--ph-text-label--letter-spacing);
-  text-transform: uppercase;
-  color: var(--ph-color-text-muted);
-}
-
-.ph-input {
-  font-family: inherit;
-  font-size: var(--ph-text-body);
-  line-height: var(--ph-text-body--line-height);
-  color: var(--ph-color-text-primary);
-  background: var(--ph-color-surface-sunken);
-  border: 1px solid var(--ph-color-border-subtle);
-  border-radius: var(--ph-radius-md);
-  padding: var(--ph-spacing-3);
-  resize: vertical;
-}
-
-.ph-input:focus-visible {
-  outline: none;
-  border-color: var(--ph-color-accent-default);
-}
-
-.ph-input::placeholder { color: var(--ph-color-text-muted); }
-.ph-input:disabled { opacity: 0.6; }
-
-.ph-composer-row {
+.ph-rail-head {
   display: flex;
   align-items: center;
   gap: var(--ph-spacing-3);
 }
 
-.ph-button {
-  font: inherit;
-  font-size: var(--ph-text-body);
-  color: var(--ph-color-accent-on);
-  background: var(--ph-color-accent-default);
-  border: none;
-  border-radius: var(--ph-radius-sm);
-  padding: var(--ph-spacing-2) var(--ph-spacing-4);
-  cursor: pointer;
+.ph-rail-mark {
+  color: var(--ph-color-accent-default);
+  font-size: 22px;
+  line-height: 1;
+  flex: none;
 }
 
-.ph-button:hover:not(:disabled) { background: var(--ph-color-accent-hover); }
-.ph-button:active:not(:disabled) { background: var(--ph-color-accent-press); }
-.ph-button:disabled { opacity: 0.45; cursor: default; }
+.ph-rail-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 
-.ph-hint {
+.ph-rail-title h1 {
+  font-size: var(--ph-text-title);
+  line-height: var(--ph-text-title--line-height);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ph-rail-title span {
   font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
   color: var(--ph-color-text-muted);
 }
 
-/* Secondary action. Same size and rhythm as the primary, without claiming the
- * accent — the two do the same thing by different routes. */
-.ph-button--ghost {
+.ph-theme-toggle {
+  font: inherit;
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--ph-color-text-secondary);
   background: transparent;
   border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-sm);
+  cursor: pointer;
+  flex: none;
 }
 
-.ph-button--ghost:hover:not(:disabled) {
+.ph-theme-toggle:hover {
   color: var(--ph-color-text-primary);
   background: var(--ph-color-surface-raised);
 }
 
-.ph-button--ghost:active:not(:disabled) {
-  background: var(--ph-color-surface-sunken);
+/* The run-budget chip: real numbers only — tool calls against the driver's
+ * hard cap, bytes streamed back, judges reporting, elapsed. Cost is always
+ * zero on this upstream, so no dollar ever appears here (docs/design.md). */
+.ph-budget-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-spacing-2);
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--ph-spacing-1) var(--ph-spacing-3);
+  border: 1px solid var(--ph-color-border-subtle);
+  border-radius: var(--ph-radius-pill);
+  background: var(--ph-color-surface-panel);
+  font-size: var(--ph-text-label);
+  line-height: var(--ph-text-label--line-height);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  color: var(--ph-color-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-/* ── What the agent is doing with its tools ───────────────────────────── */
+.ph-transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-3);
+  padding-right: var(--ph-spacing-1);
+}
 
-.ph-tools {
+/* The user's words: the one solid-accent surface in the chrome. */
+.ph-turn-user {
+  background: var(--ph-color-accent-default);
+  color: var(--ph-color-accent-on);
+  border-radius: var(--ph-radius-lg);
+  padding: var(--ph-spacing-3);
+  overflow-wrap: anywhere;
+}
+
+.ph-turn-message {
+  display: flex;
+  gap: var(--ph-spacing-2);
+  align-items: baseline;
+}
+
+.ph-turn-mark {
+  color: var(--ph-color-accent-default);
+  flex: none;
+}
+
+.ph-turn-message p {
+  color: var(--ph-color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.ph-turn-card {
   display: flex;
   flex-direction: column;
   gap: var(--ph-spacing-2);
-  padding: var(--ph-spacing-3) var(--ph-spacing-4);
+  background: var(--ph-color-surface-panel);
   border: 1px solid var(--ph-color-border-subtle);
-  border-radius: var(--ph-radius-md);
-  background: var(--ph-color-surface-card);
-  width: fit-content;
-  max-width: 100%;
+  border-radius: var(--ph-radius-lg);
+  padding: var(--ph-spacing-3);
 }
 
-.ph-tool {
+.ph-turn-card--warn { border-color: var(--ph-color-score-low); }
+
+.ph-plan-steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-2);
+}
+
+.ph-plan-step {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-spacing-2);
+}
+
+.ph-checkdot {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ph-color-accent-on);
+  border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-pill);
+}
+
+.ph-checkdot--done {
+  background: var(--ph-color-accent-default);
+  border-color: var(--ph-color-accent-default);
+}
+
+.ph-plan-label { color: var(--ph-color-text-primary); }
+
+.ph-plan-detail {
+  margin-left: auto;
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Live tool activity, folded under the plan while the agent works. */
+.ph-activity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-1);
+  border-top: 1px solid var(--ph-color-border-subtle);
+  padding-top: var(--ph-spacing-2);
+}
+
+.ph-activity-row {
   display: flex;
   align-items: center;
   gap: var(--ph-spacing-2);
@@ -223,55 +369,342 @@
   line-height: var(--ph-text-caption--line-height);
 }
 
-.ph-tool-name {
+.ph-activity-name {
   font-family: ui-monospace, monospace;
   color: var(--ph-color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.ph-tool-state { color: var(--ph-color-text-muted); }
-
-/* ── Progress / error ─────────────────────────────────────────────────── */
-
-.ph-progress,
-.ph-error {
-  display: flex;
-  align-items: center;
-  gap: var(--ph-spacing-2);
-  padding: var(--ph-spacing-3) var(--ph-spacing-4);
-  border: 1px solid var(--ph-color-border-subtle);
-  border-radius: var(--ph-radius-md);
-  background: var(--ph-color-surface-card);
-  font-size: var(--ph-text-label);
-  color: var(--ph-color-text-secondary);
-  width: fit-content;
-  max-width: 100%;
+.ph-activity-state {
+  color: var(--ph-color-text-muted);
+  margin-left: auto;
+  white-space: nowrap;
 }
 
-.ph-error {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--ph-spacing-1);
-  border-color: var(--ph-color-score-low);
-}
-
-.ph-error strong { color: var(--ph-color-text-primary); }
-
-.ph-aih {
+.ph-activity-aih {
   font-family: ui-monospace, monospace;
   font-size: var(--ph-text-caption);
   color: var(--ph-color-text-muted);
 }
 
-/* ── Results ──────────────────────────────────────────────────────────── */
+/* RANKED · BY <dimension> rows (emitted once judgment exists). */
+.ph-ranked-rows {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-1);
+}
 
-.ph-results { display: flex; flex-direction: column; gap: var(--ph-spacing-4); }
+.ph-ranked-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ph-spacing-2);
+  padding: var(--ph-spacing-1) var(--ph-spacing-2);
+  border-radius: var(--ph-radius-sm);
+  color: var(--ph-color-text-secondary);
+}
 
-.ph-results-head {
+.ph-ranked-row--leading {
+  background: var(--ph-color-accent-soft);
+  color: var(--ph-color-text-primary);
+}
+
+.ph-ranked-star {
+  color: var(--ph-color-accent-default);
+  font-size: 11px;
+}
+
+.ph-ranked-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ph-ranked-score {
+  font-size: var(--ph-text-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ph-judge-failure {
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+  color: var(--ph-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.ph-turn-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-1);
+  padding: var(--ph-spacing-3);
+  border: 1px solid var(--ph-color-score-low);
+  border-radius: var(--ph-radius-lg);
+  background: var(--ph-color-surface-panel);
+  font-size: var(--ph-text-label);
+  color: var(--ph-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.ph-turn-error strong { color: var(--ph-color-text-primary); }
+
+.ph-config-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ph-spacing-2);
+}
+
+.ph-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-2);
+}
+
+.ph-composer-row {
   display: flex;
   align-items: center;
-  gap: var(--ph-spacing-4);
-  flex-wrap: wrap;
+  gap: var(--ph-spacing-3);
 }
+
+.ph-composer-row .ph-hint { margin-left: auto; }
+
+.ph-rail-health {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-spacing-2);
+  border-top: 1px solid var(--ph-color-border-subtle);
+  padding-top: var(--ph-spacing-2);
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-muted);
+}
+
+/* ── Center — the board ───────────────────────────────────────────────── */
+
+.ph-center {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ph-center-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ph-spacing-4);
+  padding: var(--ph-spacing-4) var(--ph-spacing-5);
+  border-bottom: 1px solid var(--ph-color-border-subtle);
+}
+
+.ph-center-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ph-center-title h2 {
+  font-size: var(--ph-text-heading);
+  line-height: var(--ph-text-heading--line-height);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ph-center-title span {
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+  color: var(--ph-color-text-muted);
+}
+
+/* Lifecycle chip: First run · Generating · Reviewing · Complete · Failed. */
+.ph-status-chip {
+  flex: none;
+  font-size: var(--ph-text-label);
+  line-height: var(--ph-text-label--line-height);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-text-secondary);
+  border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-pill);
+  padding: var(--ph-spacing-1) var(--ph-spacing-3);
+}
+
+.ph-status-chip--busy {
+  color: var(--ph-color-accent-default);
+  border-color: var(--ph-color-accent-default);
+}
+
+.ph-status-chip--done { color: var(--ph-color-score-high); }
+
+.ph-status-chip--failed {
+  color: var(--ph-color-score-low);
+  border-color: var(--ph-color-score-low);
+}
+
+.ph-center-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ph-spacing-6);
+  padding: var(--ph-spacing-5);
+}
+
+.ph-board-empty {
+  align-self: center;
+  margin-top: 16vh;
+  max-width: 46ch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ph-spacing-2);
+  text-align: center;
+}
+
+.ph-board-empty strong {
+  font-size: var(--ph-text-heading);
+  line-height: var(--ph-text-heading--line-height);
+}
+
+.ph-board-empty p {
+  color: var(--ph-color-text-secondary);
+}
+
+.ph-board-gate {
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-muted);
+}
+
+/* Directions across, shared states down. Cells are the artboard's real
+ * 400×720 scaled by transform — never resized, never reflowed.
+ *
+ * Geometry that must agree with Board.tsx: THUMB_SCALE (0.55) against
+ * ARTBOARD_WIDTH/HEIGHT (400×720) gives the 220×396 box below. */
+
+.ph-board-grid {
+  display: grid;
+  gap: var(--ph-spacing-3);
+  align-items: center;
+}
+
+.ph-board-col {
+  font-size: var(--ph-text-heading);
+  line-height: var(--ph-text-heading--line-height);
+  font-weight: 600;
+  color: var(--ph-color-text-primary);
+  padding-bottom: var(--ph-spacing-1);
+  border-bottom: 1px solid var(--ph-color-border-strong);
+}
+
+.ph-board-row {
+  font-size: var(--ph-text-label);
+  line-height: var(--ph-text-label--line-height);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-text-muted);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  justify-self: center;
+}
+
+.ph-artboard {
+  position: relative;
+  width: 220px;
+  height: 396px;
+  overflow: hidden;
+  border: 1px solid var(--ph-color-border-subtle);
+  border-radius: var(--ph-radius-sm);
+  /* Neutral in both modes — chrome never tints generated work. */
+  background: var(--ph-color-artboard-bg);
+}
+
+.ph-artboard--pending,
+.ph-artboard--generating,
+.ph-artboard--failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ph-spacing-2);
+  padding: var(--ph-spacing-4);
+  background: var(--ph-color-surface-sunken);
+}
+
+.ph-artboard--generating .ph-artboard-note { color: var(--ph-color-accent-default); }
+
+.ph-artboard--failed { border-color: var(--ph-color-score-low); }
+
+.ph-artboard-note {
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+  color: var(--ph-color-text-muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* The generating cell's pulse — CSS animation, throttled harmlessly when the
+ * window is occluded; progress itself is stream-derived, never timed. */
+.ph-artboard-pulse {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--ph-color-accent-default);
+  animation: phosphene-pulse 1.4s ease-in-out infinite;
+}
+
+.ph-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  transform-origin: top left;
+  /* The thumbnail is a picture. Interaction goes through the open button, so a
+   * sandboxed document can never take a click or focus from the tab. */
+  pointer-events: none;
+}
+
+.ph-artboard-open {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: var(--ph-spacing-3);
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.ph-artboard-open:hover,
+.ph-artboard-open:focus-visible {
+  opacity: 1;
+  outline: none;
+  background: linear-gradient(to top, var(--ph-color-surface-canvas), transparent 45%);
+}
+
+.ph-artboard-open span {
+  font: inherit;
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-accent-on);
+  background: var(--ph-color-accent-default);
+  border-radius: var(--ph-radius-pill);
+  padding: var(--ph-spacing-1) var(--ph-spacing-3);
+}
+
+/* ── Direction cards (die into the Inspector in the judgment slice) ────── */
 
 .ph-results-title {
   font-size: var(--ph-text-heading);
@@ -279,20 +712,8 @@
   font-weight: 600;
 }
 
-.ph-states {
-  font-size: var(--ph-text-caption);
-  color: var(--ph-color-text-muted);
-  display: flex;
-  gap: var(--ph-spacing-2);
-  align-items: baseline;
-}
-
-.ph-state {
-  color: var(--ph-color-text-secondary);
-  border-bottom: 1px solid var(--ph-color-border-strong);
-}
-
 .ph-grid {
+  width: 100%;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--ph-spacing-4);
@@ -343,33 +764,6 @@
   color: var(--ph-color-text-secondary);
 }
 
-/* A miniature drawn in the direction's OWN colours. Artboards stay neutral —
- * chrome never tints generated work — so this is the direction's palette
- * against itself, never against ours. */
-.ph-mini {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 8px;
-  border: 1px solid;
-  border-radius: var(--ph-radius-sm);
-  min-height: 92px;
-}
-
-.ph-mini-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  height: 14px;
-  border-radius: 2px;
-  padding: 0 4px;
-  margin-bottom: 2px;
-}
-
-.ph-mini-dot { width: 6px; height: 6px; border-radius: 999px; }
-.ph-mini-line { height: 4px; border-radius: 2px; opacity: 0.85; }
-.ph-mini-cta { height: 9px; width: 34%; border-radius: 2px; margin-top: 3px; }
-
 .ph-moodboard {
   display: flex;
   flex-direction: column;
@@ -401,134 +795,12 @@
   font-family: ui-monospace, monospace;
 }
 
-/* ── Board ────────────────────────────────────────────────────────────────
- *
- * Directions across, shared states down. Cells are the artboard's real
- * 400×720 scaled by transform — never resized, never reflowed, because a
- * design judged at a different width is a different design.
- *
- * Geometry that must agree with phosphene.tsx: THUMB_SCALE (0.55) against
- * ARTBOARD_WIDTH/HEIGHT (400×720) gives the 220×396 box below. The iframe
- * keeps its true size and is scaled from the top-left corner into it. */
-
-.ph-board {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ph-spacing-4);
-}
-
-.ph-board-grid {
-  display: grid;
-  gap: var(--ph-spacing-3);
-  align-items: center;
-  /* The board can exceed the window; scroll it rather than shrink artboards. */
-  overflow-x: auto;
-  padding-bottom: var(--ph-spacing-2);
-}
-
-.ph-board-col {
-  font-size: var(--ph-text-heading);
-  line-height: var(--ph-text-heading--line-height);
-  font-weight: 600;
-  color: var(--ph-color-text-primary);
-  padding-bottom: var(--ph-spacing-1);
-  border-bottom: 1px solid var(--ph-color-border-strong);
-}
-
-.ph-board-row {
-  font-size: var(--ph-text-label);
-  line-height: var(--ph-text-label--line-height);
-  letter-spacing: var(--ph-text-label--letter-spacing);
-  text-transform: uppercase;
-  color: var(--ph-color-text-muted);
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  justify-self: center;
-}
-
-.ph-artboard {
-  position: relative;
-  width: 220px;
-  height: 396px;
-  overflow: hidden;
-  border: 1px solid var(--ph-color-border-subtle);
-  border-radius: var(--ph-radius-sm);
-  /* Neutral in both modes — chrome never tints generated work. */
-  background: var(--ph-color-artboard-bg);
-}
-
-.ph-artboard--pending,
-.ph-artboard--generating,
-.ph-artboard--failed {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--ph-spacing-2);
-  padding: var(--ph-spacing-4);
-  background: var(--ph-color-surface-sunken);
-}
-
-.ph-artboard--failed { border-color: var(--ph-color-score-low); }
-
-.ph-artboard-note {
-  font-size: var(--ph-text-caption);
-  line-height: var(--ph-text-caption--line-height);
-  color: var(--ph-color-text-muted);
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-
-.ph-frame {
-  position: absolute;
-  top: 0;
-  left: 0;
-  border: 0;
-  transform-origin: top left;
-  /* The thumbnail is a picture. Interaction goes through the open button, so a
-   * sandboxed document can never take a click or focus from the tab. */
-  pointer-events: none;
-}
-
-.ph-artboard-open {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: var(--ph-spacing-3);
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.ph-artboard-open:hover,
-.ph-artboard-open:focus-visible {
-  opacity: 1;
-  outline: none;
-  background: linear-gradient(to top, var(--ph-color-surface-canvas), transparent 45%);
-}
-
-.ph-artboard-open span {
-  font: inherit;
-  font-size: var(--ph-text-label);
-  letter-spacing: var(--ph-text-label--letter-spacing);
-  text-transform: uppercase;
-  color: var(--ph-color-accent-on);
-  background: var(--ph-color-accent-default);
-  border-radius: var(--ph-radius-pill);
-  padding: var(--ph-spacing-1) var(--ph-spacing-3);
-}
-
 /* ── Judgment as a surface ────────────────────────────────────────────── */
 
 .ph-direction-scores {
   display: flex;
   flex-direction: column;
   gap: var(--ph-spacing-3);
-  margin-top: var(--ph-spacing-5);
   max-width: 720px;
 }
 
@@ -595,6 +867,39 @@
 .ph-score-notes p { margin-top: var(--ph-spacing-2); }
 .ph-score-notes strong { color: var(--ph-color-text-primary); }
 
+/* ── Inspector ────────────────────────────────────────────────────────── */
+
+.ph-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-3);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--ph-spacing-4);
+  border-left: 1px solid var(--ph-color-border-subtle);
+  background: var(--ph-color-surface-panel);
+}
+
+.ph-insp-empty {
+  margin-top: 34vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ph-spacing-2);
+  text-align: center;
+}
+
+.ph-insp-empty strong {
+  font-size: var(--ph-text-heading);
+  line-height: var(--ph-text-heading--line-height);
+}
+
+.ph-insp-empty span {
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+  color: var(--ph-color-text-muted);
+}
+
 /* ── Full-size view ───────────────────────────────────────────────────── */
 
 .ph-zoom {
@@ -655,4 +960,38 @@
   border-radius: var(--ph-radius-sm);
   background: var(--ph-color-artboard-bg);
   max-height: 100%;
+}
+
+/* ── Responsive — the legacy ramp, on the two width tokens ────────────── */
+
+@media (max-width: 1500px) {
+  .ph-root {
+    --ph-rail-w: 320px;
+    --ph-insp-w: 320px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .ph-root {
+    --ph-rail-w: 300px;
+    --ph-insp-w: 300px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .ph-root {
+    --ph-rail-w: 264px;
+    grid-template-columns: var(--ph-rail-w) minmax(0, 1fr);
+  }
+
+  .ph-inspector { display: none; }
+}
+
+/* The viewer's app.css kills animation under prefers-reduced-motion with
+ * !important, so this is belt-and-braces for a standalone render. */
+@media (prefers-reduced-motion: reduce) {
+  .phosphene-dot--connecting,
+  .ph-artboard-pulse {
+    animation: none;
+  }
 }

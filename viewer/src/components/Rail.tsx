@@ -1,0 +1,291 @@
+/**
+ * The rail — the chat concept's left panel: an agent transcript where
+ * everything is a Turn, with ONE composer at the bottom whose action follows
+ * the run's phase. Purely presentational; every fact it shows arrives as a
+ * prop derived from the tool-event stream.
+ *
+ * Idioms lifted from the legacy LeftRail (design-legacy/): the ✦ turn mark,
+ * ALL-CAPS eyebrows, check-dot plan steps, chip pills. All styling is our own
+ * `.ph-*` classes on `--ph-*` tokens — never the viewer's utility classes.
+ */
+import { useEffect, useRef } from "react";
+import type { ToolEvent } from "../lib/agent";
+import type { Turn } from "../lib/turns";
+
+export interface RailHealth {
+  state: "connecting" | "ready" | "unavailable";
+  text: string;
+}
+
+export interface RailBudget {
+  tools: number;
+  maxTools: number;
+  kb: number;
+  judges: number;
+  elapsedSec: number;
+}
+
+export interface RailComposer {
+  value: string;
+  placeholder: string;
+  action: string;
+  canSubmit: boolean;
+  inputDisabled: boolean;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  onStop?: () => void;
+  resume?: { label: string; title: string; onClick: () => void };
+}
+
+interface RailProps {
+  turns: Turn[];
+  aih?: string;
+  busy: boolean;
+  budget?: RailBudget;
+  chips: string[];
+  composer: RailComposer;
+  health: RailHealth;
+  theme: "dark" | "light";
+  onToggleTheme: () => void;
+}
+
+function formatElapsed(totalSec: number): string {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function CheckDot({ done }: { done: boolean }) {
+  return (
+    <span className={`ph-checkdot${done ? " ph-checkdot--done" : ""}`} aria-hidden="true">
+      {done ? "✓" : ""}
+    </span>
+  );
+}
+
+function Activity({ tools, aih }: { tools: ToolEvent[]; aih?: string }) {
+  if (tools.length === 0) return null;
+  return (
+    <div className="ph-activity" aria-live="polite">
+      {tools.map((tool, i) => (
+        <div className="ph-activity-row" key={`${tool.name}-${i}`}>
+          <span
+            className={`phosphene-dot phosphene-dot--${tool.result ? "ready" : "connecting"}`}
+            aria-hidden="true"
+          />
+          <code className="ph-activity-name">{tool.name || "…"}</code>
+          <span className="ph-activity-state">
+            {tool.result ? `${(tool.result.length / 1024).toFixed(1)} KB` : "calling…"}
+          </span>
+        </div>
+      ))}
+      {aih && <code className="ph-activity-aih">{aih.split("/").pop()}</code>}
+    </div>
+  );
+}
+
+function renderTurn(turn: Turn, aih: string | undefined) {
+  switch (turn.kind) {
+    case "user":
+      return (
+        <div className="ph-turn-user" key={turn.id}>
+          {turn.text}
+        </div>
+      );
+    case "message":
+      return (
+        <div className="ph-turn-message" key={turn.id}>
+          <span className="ph-turn-mark" aria-hidden="true">
+            ✦
+          </span>
+          <p>{turn.text}</p>
+        </div>
+      );
+    case "plan":
+      return (
+        <div className="ph-turn-card" key={turn.id}>
+          <div className="ph-eyebrow">Plan</div>
+          <ul className="ph-plan-steps">
+            {turn.steps.map((step) => (
+              <li className="ph-plan-step" key={step.label}>
+                <CheckDot done={step.done} />
+                <span className="ph-plan-label">{step.label}</span>
+                {step.detail && <span className="ph-plan-detail">{step.detail}</span>}
+              </li>
+            ))}
+          </ul>
+          <Activity tools={turn.activity} aih={aih} />
+        </div>
+      );
+    case "ranked":
+      return (
+        <div className="ph-turn-card" key={turn.id}>
+          <div className="ph-eyebrow">{turn.label}</div>
+          <ul className="ph-ranked-rows">
+            {turn.items.map((item) => (
+              <li
+                className={`ph-ranked-row${item.leading ? " ph-ranked-row--leading" : ""}`}
+                key={item.directionIndex}
+              >
+                <span className="ph-ranked-star" aria-hidden="true">
+                  {item.leading ? "★" : ""}
+                </span>
+                <span className="ph-ranked-name">{item.name}</span>
+                <span className="ph-ranked-score">
+                  {item.median === null
+                    ? "—"
+                    : item.range && item.range[0] !== item.range[1]
+                      ? `${item.median.toFixed(2)} · ${item.range[0].toFixed(2)}–${item.range[1].toFixed(2)}`
+                      : item.median.toFixed(2)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    case "judges":
+      return (
+        <div className="ph-turn-card ph-turn-card--warn" key={turn.id}>
+          <div className="ph-eyebrow">Judges</div>
+          {turn.failures.map((f, i) => (
+            <p className="ph-judge-failure" key={i}>
+              {f.model ?? "a judge"} failed
+              {f.directionIndex !== undefined && ` on direction ${f.directionIndex + 1}`} —{" "}
+              {f.reason}
+            </p>
+          ))}
+        </div>
+      );
+    case "error":
+      return (
+        <div className="ph-turn-error" role="alert" key={turn.id}>
+          <strong>run failed</strong>
+          <span>{turn.text}</span>
+        </div>
+      );
+  }
+}
+
+export default function Rail({
+  turns,
+  aih,
+  busy,
+  budget,
+  chips,
+  composer,
+  health,
+  theme,
+  onToggleTheme,
+}: RailProps) {
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
+
+  // Follow the conversation only when already reading the tail — never yank
+  // the scroll away from someone reading an earlier turn.
+  const activityCount = turns.reduce(
+    (n, t) => n + (t.kind === "plan" ? t.activity.length + t.steps.filter((s) => s.done).length : 0),
+    0,
+  );
+  useEffect(() => {
+    const el = transcriptRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (nearBottom) el.scrollTop = el.scrollHeight;
+  }, [turns.length, activityCount]);
+
+  return (
+    <div className="ph-rail">
+      <header className="ph-rail-head">
+        <span className="ph-rail-mark" aria-hidden="true">
+          ✳
+        </span>
+        <div className="ph-rail-title">
+          <h1>Phosphene</h1>
+          <span>Agent · design transcript</span>
+        </div>
+        <button
+          type="button"
+          className="ph-theme-toggle"
+          onClick={onToggleTheme}
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+        >
+          {theme === "dark" ? "☀" : "☾"}
+        </button>
+      </header>
+
+      {budget && (
+        <div className="ph-budget-chip">
+          <span
+            className={`phosphene-dot phosphene-dot--${busy ? "connecting" : "ready"}`}
+            aria-hidden="true"
+          />
+          <span>
+            {budget.tools}/{budget.maxTools} tools · {budget.kb.toFixed(0)} KB
+            {budget.judges > 0 && ` · ${budget.judges} judge${budget.judges === 1 ? "" : "s"}`}
+            {" · "}
+            {formatElapsed(budget.elapsedSec)}
+          </span>
+        </div>
+      )}
+
+      <div className="ph-transcript" ref={transcriptRef}>
+        {turns.map((turn) => renderTurn(turn, busy ? aih : undefined))}
+      </div>
+
+      {chips.length > 0 && (
+        <div className="ph-config-chips">
+          {chips.map((chip) => (
+            <span className="ph-chip" key={chip}>
+              {chip}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="ph-composer">
+        <textarea
+          className="ph-input"
+          rows={3}
+          value={composer.value}
+          disabled={composer.inputDisabled}
+          placeholder={composer.placeholder}
+          onChange={(e) => composer.onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) composer.onSubmit();
+          }}
+        />
+        <div className="ph-composer-row">
+          <button
+            type="button"
+            className="ph-button"
+            onClick={composer.onSubmit}
+            disabled={!composer.canSubmit}
+          >
+            {composer.action}
+          </button>
+          {busy && composer.onStop && (
+            <button type="button" className="ph-button ph-button--ghost" onClick={composer.onStop}>
+              stop
+            </button>
+          )}
+          {!busy && composer.resume && (
+            <button
+              type="button"
+              className="ph-chip ph-chip--action"
+              onClick={composer.resume.onClick}
+              title={composer.resume.title}
+            >
+              {composer.resume.label}
+            </button>
+          )}
+          <span className="ph-hint">⌘↵ send</span>
+        </div>
+      </div>
+
+      <footer className="ph-rail-health" aria-live="polite">
+        <span className={`phosphene-dot phosphene-dot--${health.state}`} aria-hidden="true" />
+        <span>{health.text}</span>
+      </footer>
+    </div>
+  );
+}

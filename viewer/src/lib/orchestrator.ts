@@ -60,6 +60,10 @@ Read the user's feedback and call phosphene_refine_state once per (direction_ind
 
 Then one closing sentence. Do not restate the documents.`;
 
+/** Each driver's hard tool budget, mirrored for the run-budget chip — the
+ * display shows the SAME ceiling the run is actually bounded by. */
+export const MAX_TOOL_CALLS = { explore: 16, refine: 9, resume: 10 } as const;
+
 export interface Exploration {
   invention?: Invention;
   /** `${directionIndex}:${label}` → cell state, derived from tool events. */
@@ -201,7 +205,7 @@ export async function explore(
       timeoutSeconds: 1800,
       stallSeconds: 660,
       // 1 invent + 9 renders + up to 6 judges; 17th call = churn, abort.
-      maxToolCalls: 16,
+      maxToolCalls: MAX_TOOL_CALLS.explore,
     },
     (progress) => {
       latest = progress.tools;
@@ -240,7 +244,7 @@ export async function refine(
       // At most 9 revisions at ~40-60s each, sequential.
       timeoutSeconds: 1200,
       stallSeconds: 660,
-      maxToolCalls: 9,
+      maxToolCalls: MAX_TOOL_CALLS.refine,
     },
     (progress) => {
       latest = progress.tools;
@@ -271,7 +275,7 @@ export async function resume(
       timeoutSeconds: 300,
       stallSeconds: 120,
       // 1 get_exploration + up to 9 get_state.
-      maxToolCalls: 10,
+      maxToolCalls: MAX_TOOL_CALLS.resume,
     },
     (progress) => {
       latest = progress.tools;
