@@ -25,6 +25,20 @@ scored **separately, never combined**.
 - **Per-cell states** (Artboard Card: Queued / Generating / failed /
   Scored / Selected), score chips on boards, selection ring, rank-ordered
   columns, WHY-THIS-SCORE disclosures, History, Prefer.
+- **The pan/zoom canvas** (Phase C, landed on Maya's go): the board is a
+  stage — drag pans, wheel zooms anchored at the cursor, double-click a
+  board opens it, double-click the background (or the pill %, or the fit
+  chip) frames everything. Cells sit at TRUE 400×720; one transform does
+  all scaling, headers are sized in canvas units, and rank reorders only
+  animate x/y — no DOM move, no iframe re-parse. Ported from the legacy
+  Canvas with the move/region/annotation subsystems dropped.
+- **PNG export** via the Spike D path: the zoom modal rasterizes any board
+  (SVG `foreignObject` → Image → canvas, 2×) and saves or copies it. One
+  measured trap recorded in `lib/rasterize.ts`: the SVG must ride a
+  `data:` URL — Chromium-family engines taint the canvas after drawing a
+  `blob:`-loaded foreignObject SVG, and the same markup through a data URL
+  exports clean. (`save png` uses `<a download>`, which some webviews
+  ignore — `copy png` is the fallback; both fail loudly.)
 
 ## Adapted — the idea kept, the numbers made honest
 
@@ -78,9 +92,11 @@ scored **separately, never combined**.
 
 - The host webview background is a Rust constant (`#0c0a09`): light mode
   flashes dark for a frame at boot and cannot change it.
-- The light-mode "Complete" chip sits low-contrast (score-high is
-  mode-invariant by design) — polish candidate.
+- ~~The light-mode "Complete" chip sits low-contrast~~ fixed: the chip is
+  chrome, so light mode restyles it with `accent-press` (the score scale
+  itself stays mode-invariant).
 - A plugin whitelist is coming upstream (#281, default-deny): first-run
   copy treats an unreachable daemon as a calm gate, never an error.
-- Pan/zoom canvas + Fit + zoom pill + PNG export (Spike D rasterization
-  path) are designed but deferred — Phase C, on Maya's explicit go.
+- `save png` in the tab webview is best-effort (`<a download>` may be
+  inert there — verified in Chrome, not in the webview); `copy png` and
+  `copy html` cover hand-off either way.

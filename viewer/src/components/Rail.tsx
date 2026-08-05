@@ -163,8 +163,12 @@ function renderTurn(turn: Turn, aih: string | undefined) {
           {turn.failures.map((f, i) => (
             <p className="ph-judge-failure" key={i}>
               {f.model ?? "a judge"} failed
-              {f.directionIndex !== undefined && ` on direction ${f.directionIndex + 1}`} —{" "}
-              {f.reason}
+              {f.name
+                ? ` on ${f.name}`
+                : f.directionIndex !== undefined
+                  ? ` on direction ${f.directionIndex + 1}`
+                  : ""}{" "}
+              — {f.reason}
             </p>
           ))}
         </div>

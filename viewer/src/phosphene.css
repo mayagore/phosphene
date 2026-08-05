@@ -639,6 +639,10 @@
 
 .ph-status-chip--done { color: var(--ph-color-score-high); }
 
+/* score-high is mode-invariant by design (it's the artwork's tonal scale) —
+ * but this chip is CHROME, and on light surfaces that value washes out. */
+[data-theme="light"] .ph-status-chip--done { color: var(--ph-color-accent-press); }
+
 .ph-status-chip--failed {
   color: var(--ph-color-score-low);
   border-color: var(--ph-color-score-low);
@@ -680,44 +684,69 @@
   color: var(--ph-color-text-muted);
 }
 
-/* Directions across, shared states down. Cells are the artboard's real
- * 400×720 scaled by transform — never resized, never reflowed.
- *
- * Geometry that must agree with Board.tsx: THUMB_SCALE (0.55) against
- * ARTBOARD_WIDTH/HEIGHT (400×720) gives the 220×396 box below. */
+/* ── The canvas ───────────────────────────────────────────────────────────
+ * A single stage carries every shape and header; pan and zoom are ONE
+ * transform on the stage. Shapes sit at true 400×720 in canvas units, so
+ * headers and chips are sized in canvas units too (they read at fit zoom
+ * and grow honestly as you dive in). Rank reorders only move x/y — the
+ * transition below is the reorder animation; pan/zoom never touch it. */
 
-.ph-board-grid {
-  display: grid;
-  gap: var(--ph-spacing-3);
-  align-items: center;
+.ph-canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
-/* Column headers are buttons: click = select the direction. Rank re-orders
- * columns purely via gridColumn (see Board.tsx) — the underline is the only
- * chrome, the accent version marks selection. */
-.ph-board-col {
+.ph-canvas--panning { cursor: grabbing; }
+
+.ph-canvas-stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.ph-canvas-node {
+  position: absolute;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.ph-canvas-node--interactive { pointer-events: auto; }
+
+/* Column header — canvas-unit type: click = select the direction. */
+.ph-col-head {
   font: inherit;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--ph-spacing-1);
+  gap: 8px;
   text-align: left;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--ph-color-border-strong);
-  padding: 0 0 var(--ph-spacing-1) 0;
+  border-bottom: 3px solid var(--ph-color-border-strong);
+  padding: 0 0 10px 0;
   cursor: pointer;
 }
 
-.ph-board-col--selected {
-  border-bottom-color: var(--ph-color-accent-default);
+.ph-col-head--selected { border-bottom-color: var(--ph-color-accent-default); }
+.ph-col-head--selected .ph-board-col-name { color: var(--ph-color-accent-default); }
+
+.ph-col-head .ph-board-col-name {
+  font-size: 40px;
+  line-height: 48px;
 }
 
-.ph-board-col--selected .ph-board-col-name { color: var(--ph-color-accent-default); }
+.ph-col-head .ph-board-col-rank { font-size: 26px; line-height: 32px; }
+.ph-col-head .ph-cell-chip { font-size: 24px; line-height: 32px; padding: 4px 16px; }
+.ph-col-head .ph-preferred-mini { font-size: 28px; }
 
 .ph-board-col-name {
-  font-size: var(--ph-text-heading);
-  line-height: var(--ph-text-heading--line-height);
   font-weight: 600;
   color: var(--ph-color-text-primary);
 }
@@ -725,47 +754,86 @@
 .ph-board-col-meta {
   display: flex;
   align-items: center;
-  gap: var(--ph-spacing-2);
+  gap: 12px;
 }
 
 .ph-board-col-rank {
-  font-size: var(--ph-text-label);
-  letter-spacing: var(--ph-text-label--letter-spacing);
   color: var(--ph-color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
-.ph-preferred-mini {
-  color: var(--ph-color-accent-default);
-  font-size: var(--ph-text-label);
-}
+.ph-preferred-mini { color: var(--ph-color-accent-default); }
 
-.ph-board-row {
-  font-size: var(--ph-text-label);
-  line-height: var(--ph-text-label--line-height);
-  letter-spacing: var(--ph-text-label--letter-spacing);
+.ph-row-head {
+  font-size: 28px;
+  line-height: 36px;
+  letter-spacing: 2px;
   text-transform: uppercase;
   color: var(--ph-color-text-muted);
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  justify-self: center;
 }
 
-.ph-artboard {
-  position: relative;
-  width: 220px;
-  height: 396px;
+/* One cell on the stage. Neutral in both modes — chrome never tints
+ * generated work. */
+.ph-shape {
+  position: absolute;
   overflow: hidden;
-  border: 1px solid var(--ph-color-border-subtle);
-  border-radius: var(--ph-radius-sm);
-  /* Neutral in both modes — chrome never tints generated work. */
+  border: 2px solid var(--ph-color-border-subtle);
+  border-radius: 8px;
   background: var(--ph-color-artboard-bg);
-  cursor: pointer;
+  cursor: default;
+  transition: left 240ms ease, top 240ms ease;
 }
 
-.ph-artboard--selected {
-  outline: 2px solid var(--ph-color-accent-default);
-  outline-offset: 1px;
+.ph-shape--selected {
+  border-color: var(--ph-color-accent-default);
+  outline: 8px solid var(--ph-color-accent-soft);
+}
+
+.ph-artboard--pending,
+.ph-artboard--generating,
+.ph-artboard--failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 32px;
+  background: var(--ph-color-surface-sunken);
+}
+
+.ph-artboard--generating .ph-artboard-note { color: var(--ph-color-accent-default); }
+
+.ph-artboard--failed { border-color: var(--ph-color-score-low); }
+
+.ph-artboard-note {
+  font-size: 28px;
+  line-height: 38px;
+  color: var(--ph-color-text-muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* The generating cell's pulse — CSS animation, throttled harmlessly when the
+ * window is occluded; progress itself is stream-derived, never timed. */
+.ph-artboard-pulse {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 8px;
+  background: var(--ph-color-accent-default);
+  animation: phosphene-pulse 1.4s ease-in-out infinite;
+}
+
+.ph-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 0;
+  /* The board is a picture. Interaction goes through the open button, so a
+   * sandboxed document can never take a click or focus from the tab. */
+  pointer-events: none;
 }
 
 /* The direction's tonal score, overlaid on the board's own corner — the one
@@ -781,60 +849,16 @@
 
 .ph-cell-chip--overlay {
   position: absolute;
-  right: var(--ph-spacing-2);
-  bottom: var(--ph-spacing-2);
+  right: 16px;
+  bottom: 16px;
+  font-size: 24px;
+  line-height: 32px;
+  padding: 4px 16px;
 }
 
 .ph-cell-chip--selected {
   background: var(--ph-color-accent-default);
   color: var(--ph-color-accent-on);
-}
-
-.ph-artboard--pending,
-.ph-artboard--generating,
-.ph-artboard--failed {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--ph-spacing-2);
-  padding: var(--ph-spacing-4);
-  background: var(--ph-color-surface-sunken);
-}
-
-.ph-artboard--generating .ph-artboard-note { color: var(--ph-color-accent-default); }
-
-.ph-artboard--failed { border-color: var(--ph-color-score-low); }
-
-.ph-artboard-note {
-  font-size: var(--ph-text-caption);
-  line-height: var(--ph-text-caption--line-height);
-  color: var(--ph-color-text-muted);
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-
-/* The generating cell's pulse — CSS animation, throttled harmlessly when the
- * window is occluded; progress itself is stream-derived, never timed. */
-.ph-artboard-pulse {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  background: var(--ph-color-accent-default);
-  animation: phosphene-pulse 1.4s ease-in-out infinite;
-}
-
-.ph-frame {
-  position: absolute;
-  top: 0;
-  left: 0;
-  border: 0;
-  transform-origin: top left;
-  /* The thumbnail is a picture. Interaction goes through the open button, so a
-   * sandboxed document can never take a click or focus from the tab. */
-  pointer-events: none;
 }
 
 .ph-artboard-open {
@@ -843,7 +867,7 @@
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: var(--ph-spacing-3);
+  padding: 32px;
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -860,13 +884,55 @@
 
 .ph-artboard-open span {
   font: inherit;
-  font-size: var(--ph-text-label);
-  letter-spacing: var(--ph-text-label--letter-spacing);
+  font-size: 26px;
+  letter-spacing: 2px;
   text-transform: uppercase;
   color: var(--ph-color-accent-on);
   background: var(--ph-color-accent-default);
   border-radius: var(--ph-radius-pill);
-  padding: var(--ph-spacing-1) var(--ph-spacing-3);
+  padding: 8px 28px;
+}
+
+/* The zoom pill — screen space, not canvas space. */
+.ph-zoom-pill {
+  position: absolute;
+  bottom: var(--ph-spacing-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--ph-color-border-subtle);
+  border-radius: var(--ph-radius-pill);
+  background: var(--ph-color-surface-card);
+}
+
+.ph-zoom-pill button {
+  font: inherit;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--ph-radius-pill);
+  background: transparent;
+  color: var(--ph-color-text-secondary);
+  cursor: pointer;
+}
+
+.ph-zoom-pill button:hover {
+  color: var(--ph-color-text-primary);
+  background: var(--ph-color-surface-raised);
+}
+
+.ph-zoom-pill .ph-zoom-pill-pct {
+  width: auto;
+  min-width: 52px;
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Direction anatomy (lives in the Inspector's DIRECTION section) ────── */

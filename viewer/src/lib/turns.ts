@@ -29,7 +29,7 @@ export type Turn =
   /* ranked + judges land in Phase B — the union carries them now so the
    * renderer is written once. */
   | { kind: "ranked"; id: string; label: string; items: RankedItem[] }
-  | { kind: "judges"; id: string; failures: JudgeFailure[] }
+  | { kind: "judges"; id: string; failures: Array<JudgeFailure & { name?: string }> }
   | { kind: "error"; id: string; text: string };
 
 export interface PlanStep {
@@ -177,7 +177,19 @@ export function deriveTurns(input: TurnsInput): Turn[] {
 
   const judgeFailures = exploration?.judgeFailures ?? [];
   if (judgeFailures.length > 0) {
-    turns.push({ kind: "judges", id: "judges", failures: judgeFailures });
+    turns.push({
+      kind: "judges",
+      id: "judges",
+      // Name the direction, not its index — "failed on direction 1" made the
+      // reader translate; "failed on Illuminated Vellum" doesn't.
+      failures: judgeFailures.map((f) => ({
+        ...f,
+        name:
+          f.directionIndex !== undefined
+            ? invention?.directions[f.directionIndex]?.name
+            : undefined,
+      })),
+    });
   }
 
   // Refine feedbacks after the first prompt, in order.
