@@ -80,6 +80,22 @@
   background: var(--ph-color-surface-raised);
 }
 
+.ph-chip--active,
+.ph-chip--action.ph-chip--active {
+  color: var(--ph-color-accent-default);
+  border-color: var(--ph-color-accent-default);
+  background: var(--ph-color-accent-soft);
+}
+
+/* Tonal score scale — low → mid → high encodes magnitude, driven by data
+ * (scoreTone). accent-on stays readable on all three stops in both modes. */
+.ph-tone-bg--low { background: var(--ph-color-score-low); color: var(--ph-color-accent-on); }
+.ph-tone-bg--mid { background: var(--ph-color-score-mid); color: var(--ph-color-accent-on); }
+.ph-tone-bg--high { background: var(--ph-color-score-high); color: var(--ph-color-accent-on); }
+.ph-tone-text--low { color: var(--ph-color-score-low); }
+.ph-tone-text--mid { color: var(--ph-color-score-mid); }
+.ph-tone-text--high { color: var(--ph-color-score-high); }
+
 .ph-button {
   font: inherit;
   font-size: var(--ph-text-body);
@@ -241,6 +257,82 @@
 .ph-theme-toggle:hover {
   color: var(--ph-color-text-primary);
   background: var(--ph-color-surface-raised);
+}
+
+/* Past explorations — a native <details> popover; every entry is a resume key. */
+.ph-history {
+  position: relative;
+  margin-left: auto;
+}
+
+.ph-rail-head .ph-history + .ph-theme-toggle { margin-left: 0; }
+
+.ph-history summary {
+  list-style: none;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ph-color-text-secondary);
+  border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-sm);
+  cursor: pointer;
+}
+
+.ph-history summary::-webkit-details-marker { display: none; }
+
+.ph-history summary:hover {
+  color: var(--ph-color-text-primary);
+  background: var(--ph-color-surface-raised);
+}
+
+.ph-history-list {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  z-index: 20;
+  width: 264px;
+  max-height: 320px;
+  overflow-y: auto;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-1);
+  padding: var(--ph-spacing-2);
+  background: var(--ph-color-surface-panel);
+  border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-md);
+}
+
+.ph-history-entry {
+  font: inherit;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  gap: 1px;
+  padding: var(--ph-spacing-2);
+  background: transparent;
+  border: 0;
+  border-radius: var(--ph-radius-sm);
+  cursor: pointer;
+}
+
+.ph-history-entry:hover:not(:disabled) { background: var(--ph-color-surface-raised); }
+.ph-history-entry:disabled { opacity: 0.5; cursor: default; }
+
+.ph-history-brief {
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ph-history-when {
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-muted);
 }
 
 /* The run-budget chip: real numbers only — tool calls against the driver's
@@ -521,6 +613,12 @@
   color: var(--ph-color-text-muted);
 }
 
+.ph-dim-chips {
+  display: flex;
+  gap: var(--ph-spacing-1);
+  flex: none;
+}
+
 /* Lifecycle chip: First run · Generating · Reviewing · Complete · Failed. */
 .ph-status-chip {
   flex: none;
@@ -594,13 +692,52 @@
   align-items: center;
 }
 
+/* Column headers are buttons: click = select the direction. Rank re-orders
+ * columns purely via gridColumn (see Board.tsx) — the underline is the only
+ * chrome, the accent version marks selection. */
 .ph-board-col {
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ph-spacing-1);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--ph-color-border-strong);
+  padding: 0 0 var(--ph-spacing-1) 0;
+  cursor: pointer;
+}
+
+.ph-board-col--selected {
+  border-bottom-color: var(--ph-color-accent-default);
+}
+
+.ph-board-col--selected .ph-board-col-name { color: var(--ph-color-accent-default); }
+
+.ph-board-col-name {
   font-size: var(--ph-text-heading);
   line-height: var(--ph-text-heading--line-height);
   font-weight: 600;
   color: var(--ph-color-text-primary);
-  padding-bottom: var(--ph-spacing-1);
-  border-bottom: 1px solid var(--ph-color-border-strong);
+}
+
+.ph-board-col-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ph-spacing-2);
+}
+
+.ph-board-col-rank {
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  color: var(--ph-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ph-preferred-mini {
+  color: var(--ph-color-accent-default);
+  font-size: var(--ph-text-label);
 }
 
 .ph-board-row {
@@ -623,6 +760,34 @@
   border-radius: var(--ph-radius-sm);
   /* Neutral in both modes — chrome never tints generated work. */
   background: var(--ph-color-artboard-bg);
+  cursor: pointer;
+}
+
+.ph-artboard--selected {
+  outline: 2px solid var(--ph-color-accent-default);
+  outline-offset: 1px;
+}
+
+/* The direction's tonal score, overlaid on the board's own corner — the one
+ * sanctioned chrome-on-artboard crossing (ink-adjacent, per the legacy rule). */
+.ph-cell-chip {
+  font-size: var(--ph-text-label);
+  line-height: var(--ph-text-label--line-height);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--ph-radius-pill);
+  padding: 2px var(--ph-spacing-2);
+}
+
+.ph-cell-chip--overlay {
+  position: absolute;
+  right: var(--ph-spacing-2);
+  bottom: var(--ph-spacing-2);
+}
+
+.ph-cell-chip--selected {
+  background: var(--ph-color-accent-default);
+  color: var(--ph-color-accent-on);
 }
 
 .ph-artboard--pending,
@@ -704,43 +869,7 @@
   padding: var(--ph-spacing-1) var(--ph-spacing-3);
 }
 
-/* ── Direction cards (die into the Inspector in the judgment slice) ────── */
-
-.ph-results-title {
-  font-size: var(--ph-text-heading);
-  line-height: var(--ph-text-heading--line-height);
-  font-weight: 600;
-}
-
-.ph-grid {
-  width: 100%;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: var(--ph-spacing-4);
-}
-
-.ph-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ph-spacing-3);
-  padding: var(--ph-spacing-4);
-  background: var(--ph-color-surface-card);
-  border: 1px solid var(--ph-color-border-subtle);
-  border-radius: var(--ph-radius-lg);
-}
-
-.ph-card-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--ph-spacing-2);
-}
-
-.ph-card-name {
-  font-size: var(--ph-text-heading);
-  line-height: var(--ph-text-heading--line-height);
-  font-weight: 600;
-}
+/* ── Direction anatomy (lives in the Inspector's DIRECTION section) ────── */
 
 .ph-card-mood {
   font-size: var(--ph-text-caption);
@@ -795,79 +924,7 @@
   font-family: ui-monospace, monospace;
 }
 
-/* ── Judgment as a surface ────────────────────────────────────────────── */
-
-.ph-direction-scores {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ph-spacing-3);
-  max-width: 720px;
-}
-
-.ph-scores {
-  display: flex;
-  flex-direction: column;
-  gap: var(--ph-spacing-3);
-}
-
-.ph-score-table {
-  border-collapse: collapse;
-  font-size: var(--ph-text-body);
-  line-height: var(--ph-text-body--line-height);
-}
-
-.ph-score-table th {
-  font-size: var(--ph-text-label);
-  line-height: var(--ph-text-label--line-height);
-  letter-spacing: var(--ph-text-label--letter-spacing);
-  text-transform: uppercase;
-  color: var(--ph-color-text-muted);
-  font-weight: 500;
-  text-align: left;
-  padding: var(--ph-spacing-1) var(--ph-spacing-4) var(--ph-spacing-1) 0;
-  border-bottom: 1px solid var(--ph-color-border-strong);
-}
-
-.ph-score-table td {
-  padding: var(--ph-spacing-2) var(--ph-spacing-4) var(--ph-spacing-2) 0;
-  border-bottom: 1px solid var(--ph-color-border-subtle);
-}
-
-.ph-score-judge {
-  font-family: ui-monospace, monospace;
-  font-size: var(--ph-text-caption);
-  color: var(--ph-color-text-secondary);
-}
-
-/* Scores are the one place the score scale carries meaning. */
-.ph-score-cell {
-  font-size: var(--ph-text-score);
-  line-height: var(--ph-text-score--line-height);
-  color: var(--ph-color-score-mid);
-  font-variant-numeric: tabular-nums;
-}
-
-.ph-score-notes {
-  font-size: var(--ph-text-caption);
-  line-height: var(--ph-text-caption--line-height);
-  color: var(--ph-color-text-secondary);
-  border: 1px solid var(--ph-color-border-subtle);
-  border-radius: var(--ph-radius-md);
-  padding: var(--ph-spacing-2) var(--ph-spacing-3);
-}
-
-.ph-score-notes summary {
-  cursor: pointer;
-  color: var(--ph-color-text-muted);
-  font-size: var(--ph-text-label);
-  letter-spacing: var(--ph-text-label--letter-spacing);
-  text-transform: uppercase;
-}
-
-.ph-score-notes p { margin-top: var(--ph-spacing-2); }
-.ph-score-notes strong { color: var(--ph-color-text-primary); }
-
-/* ── Inspector ────────────────────────────────────────────────────────── */
+/* ── Inspector — judgment as a surface, not a number ──────────────────── */
 
 .ph-inspector {
   display: flex;
@@ -878,6 +935,222 @@
   padding: var(--ph-spacing-4);
   border-left: 1px solid var(--ph-color-border-subtle);
   background: var(--ph-color-surface-panel);
+}
+
+.ph-insp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ph-insp-close {
+  font: inherit;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ph-color-text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--ph-radius-sm);
+  cursor: pointer;
+}
+
+.ph-insp-close:hover {
+  color: var(--ph-color-text-primary);
+  background: var(--ph-color-surface-raised);
+}
+
+.ph-insp-title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-1);
+}
+
+.ph-insp-title h2 {
+  font-size: var(--ph-text-title);
+  line-height: var(--ph-text-title--line-height);
+  font-weight: 600;
+}
+
+.ph-insp-title > span {
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-muted);
+}
+
+.ph-preferred-chip {
+  width: fit-content;
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  color: var(--ph-color-accent-default);
+  background: var(--ph-color-accent-soft);
+  border-radius: var(--ph-radius-pill);
+  padding: 2px var(--ph-spacing-2);
+}
+
+.ph-insp-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-2);
+  border-top: 1px solid var(--ph-color-border-subtle);
+  padding-top: var(--ph-spacing-3);
+}
+
+/* One dimension: median, the judge dots on a track, the spread, every why. */
+.ph-dim {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-1);
+  padding-bottom: var(--ph-spacing-2);
+}
+
+.ph-dim-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ph-spacing-2);
+}
+
+.ph-dim-label {
+  font-size: var(--ph-text-body);
+  color: var(--ph-color-text-secondary);
+}
+
+.ph-dim-median {
+  font-size: var(--ph-text-score);
+  line-height: var(--ph-text-score--line-height);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ph-dim-track {
+  position: relative;
+  height: 8px;
+  margin: var(--ph-spacing-1) 0;
+  background: var(--ph-color-score-track);
+  border-radius: var(--ph-radius-pill);
+}
+
+.ph-dim-band {
+  position: absolute;
+  top: 2px;
+  height: 4px;
+  background: var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-pill);
+}
+
+.ph-dim-dot {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--ph-radius-pill);
+  transform: translateX(-50%);
+}
+
+.ph-dim-needle {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--ph-color-text-secondary);
+  transform: translateX(-50%);
+}
+
+.ph-dim-range {
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ph-why {
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+}
+
+.ph-why summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--ph-color-text-muted);
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+}
+
+.ph-why summary::-webkit-details-marker { display: none; }
+.ph-why summary:hover { color: var(--ph-color-text-secondary); }
+.ph-why[open] .ph-why-caret { transform: rotate(90deg); }
+
+.ph-why-caret {
+  display: inline-block;
+  color: var(--ph-color-accent-default);
+  margin-right: var(--ph-spacing-1);
+  transition: transform 120ms ease;
+}
+
+.ph-why p {
+  margin-top: var(--ph-spacing-1);
+  padding-left: var(--ph-spacing-2);
+  border-left: 2px solid var(--ph-color-accent-soft);
+  color: var(--ph-color-text-secondary);
+}
+
+.ph-why-none { font-style: italic; color: var(--ph-color-text-muted); }
+
+/* The measured facts — objective, per judge result. */
+.ph-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-1);
+  border: 1px solid var(--ph-color-border-subtle);
+  border-radius: var(--ph-radius-md);
+  padding: var(--ph-spacing-2) var(--ph-spacing-3);
+}
+
+.ph-facts-judge {
+  font-family: ui-monospace, monospace;
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-secondary);
+}
+
+.ph-fact {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ph-spacing-2);
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+}
+
+.ph-fact-label { color: var(--ph-color-text-muted); }
+
+.ph-fact-value {
+  color: var(--ph-color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ph-fact--bad .ph-fact-value { color: var(--ph-color-score-low); font-weight: 600; }
+
+.ph-facts-note {
+  font-size: var(--ph-text-caption);
+  font-style: italic;
+  color: var(--ph-color-text-muted);
+}
+
+.ph-insp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ph-spacing-2);
+  margin-top: auto;
+  border-top: 1px solid var(--ph-color-border-subtle);
+  padding-top: var(--ph-spacing-3);
+}
+
+.ph-button--active {
+  color: var(--ph-color-accent-default);
+  border-color: var(--ph-color-accent-default);
+  background: var(--ph-color-accent-soft);
 }
 
 .ph-insp-empty {
@@ -944,7 +1217,6 @@
 .ph-zoom-close {
   font: inherit;
   font-size: var(--ph-text-label);
-  margin-left: auto;
   color: var(--ph-color-text-secondary);
   background: transparent;
   border: 1px solid var(--ph-color-border-strong);
@@ -953,6 +1225,8 @@
   cursor: pointer;
 }
 
+.ph-zoom-head .ph-zoom-close:first-of-type { margin-left: auto; }
+
 .ph-zoom-close:hover { color: var(--ph-color-text-primary); }
 
 .ph-zoom-frame {
@@ -960,6 +1234,25 @@
   border-radius: var(--ph-radius-sm);
   background: var(--ph-color-artboard-bg);
   max-height: 100%;
+}
+
+/* View-source of a board: the document is already in memory; show it as-is. */
+.ph-zoom-source {
+  width: 560px;
+  max-width: 80vw;
+  height: 720px;
+  max-height: 100%;
+  overflow: auto;
+  font-family: ui-monospace, monospace;
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+  color: var(--ph-color-text-secondary);
+  background: var(--ph-color-surface-sunken);
+  border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-sm);
+  padding: var(--ph-spacing-3);
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* ── Responsive — the legacy ramp, on the two width tokens ────────────── */

@@ -32,8 +32,10 @@ import {
   type Exploration,
 } from "./lib/orchestrator";
 import { deriveTurns, type RunMode } from "./lib/turns";
+import { rankDirections, type Dimension } from "./lib/scores";
+import { loadHistory, recordHistory, type HistoryEntry } from "./lib/history";
 import Rail, { type RailBudget, type RailComposer, type RailHealth } from "./components/Rail";
-import Board, { type StatusTone, type Zoomed } from "./components/Board";
+import Board, { type BoardSelection, type StatusTone, type Zoomed } from "./components/Board";
 import Inspector from "./components/Inspector";
 
 interface TabProps {
@@ -84,46 +86,25 @@ type Run =
       exploration?: Exploration;
     };
 
-/** Later rounds win cell-by-cell; scores accumulate; invention persists. */
+/** Later rounds win cell-by-cell; scores and judge failures accumulate;
+ * invention persists. */
 function mergeExploration(base: Exploration | undefined, current: Exploration): Exploration {
   if (!base) return current;
   return {
     invention: current.invention ?? base.invention,
     cells: { ...base.cells, ...current.cells },
     scores: [...base.scores, ...current.scores],
+    judgeFailures: [...base.judgeFailures, ...current.judgeFailures],
     summary: current.summary ?? base.summary,
     tools: current.tools,
   };
 }
 
-/** localStorage keys. Namespaced `phosphene.*` — the origin is shared by
- * every tab in the viewer (spikes/01 §E), so exclusivity is never assumed. */
-const STORE_KEY = "phosphene.lastExploration";
+/** localStorage keys live under `phosphene.*` — the origin is shared by every
+ * tab in the viewer (spikes/01 §E), so exclusivity is never assumed. History
+ * itself lives in lib/history.ts. */
 const THEME_KEY = "phosphene.theme";
-
-interface StoredExploration {
-  explorationId: string;
-  brief: string;
-}
-
-function loadStored(): StoredExploration | undefined {
-  try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as StoredExploration;
-    return parsed.explorationId ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function saveStored(value: StoredExploration): void {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(value));
-  } catch {
-    // Storage full or unavailable: resume is a convenience, never a failure.
-  }
-}
+const preferredKey = (explorationId: string) => `phosphene.preferred.${explorationId}`;
 
 type Theme = "dark" | "light";
 
@@ -174,7 +155,12 @@ export default function Phosphene({ arguments: _args }: TabProps) {
   const [run, setRun] = useState<Run>({ phase: "idle" });
   const [zoomed, setZoomed] = useState<Zoomed | null>(null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [selection, setSelection] = useState<BoardSelection>(null);
+  const [rankDimension, setRankDimension] = useState<Dimension>("fitness");
+  const [preferred, setPreferred] = useState<number | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
   const abort = useRef<{ aborted: boolean }>({ aborted: false });
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -198,17 +184,57 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     }
   }, [theme]);
 
+  // Escape walks outward: zoom first, then selection.
   useEffect(() => {
-    if (!zoomed) return;
+    if (!zoomed && !selection) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setZoomed(null);
+      if (e.key !== "Escape") return;
+      if (zoomed) setZoomed(null);
+      else setSelection(null);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [zoomed]);
+  }, [zoomed, selection]);
+
+  // Preference is scoped to the exploration and outlives the webview.
+  const explorationId = run.phase === "idle" ? undefined : run.explorationId;
+  useEffect(() => {
+    if (!explorationId) {
+      setPreferred(null);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(preferredKey(explorationId));
+      const parsed = raw === null ? NaN : Number(raw);
+      setPreferred(Number.isInteger(parsed) ? parsed : null);
+    } catch {
+      setPreferred(null);
+    }
+  }, [explorationId]);
+
+  const togglePrefer = useCallback(
+    (directionIndex: number) => {
+      if (!explorationId) return;
+      setPreferred((prev) => {
+        const next = prev === directionIndex ? null : directionIndex;
+        try {
+          if (next === null) localStorage.removeItem(preferredKey(explorationId));
+          else localStorage.setItem(preferredKey(explorationId), String(next));
+        } catch {
+          // Preference that doesn't persist still steers this session.
+        }
+        return next;
+      });
+    },
+    [explorationId],
+  );
+
+  const remember = useCallback((id: string, brief: string) => {
+    setHistory(recordHistory({ explorationId: id, brief, when: Date.now() }));
+  }, []);
 
   const doResume = useCallback(
-    async (explorationId: string, label: string) => {
+    async (id: string, label: string) => {
       if (run.phase === "exploring") return;
       abort.current = { aborted: false };
       const signal = abort.current;
@@ -219,14 +245,14 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         startedAt,
         prompts: [label],
         brief: label,
-        explorationId,
+        explorationId: id,
         exploration: deriveExploration([]),
       });
       try {
         const client = Client.viewer(await transport());
         const replay = await resume(
           client,
-          explorationId,
+          id,
           (p) =>
             setRun((prev) =>
               prev.phase === "exploring"
@@ -244,10 +270,10 @@ export default function Phosphene({ arguments: _args }: TabProps) {
             endedAt: Date.now(),
             prompts: [label],
             brief: label,
-            explorationId,
+            explorationId: id,
             exploration: replay,
           });
-          if (replay.invention) saveStored({ explorationId, brief: label });
+          if (replay.invention) remember(id, label);
         }
       } catch (error) {
         console.error("phosphene: resume failed", error);
@@ -259,21 +285,21 @@ export default function Phosphene({ arguments: _args }: TabProps) {
             endedAt: Date.now(),
             prompts: [label],
             brief: label,
-            explorationId,
+            explorationId: id,
             reason: String(error).slice(0, 300),
           });
         }
       }
     },
-    [run.phase],
+    [run.phase, remember],
   );
 
   const start = useCallback(async () => {
     const text = composerText.trim();
     if (text.length === 0 || run.phase === "exploring") return;
     // Escape hatch: `resume:<exploration-id>` replays any stored board by id —
-    // including boards from runs that never reached done (where localStorage
-    // was never written). The database is the truth; this is just a key.
+    // including boards from runs that never reached done (where history was
+    // never written). The database is the truth; this is just a key.
     if (text.toLowerCase().startsWith("resume:")) {
       const id = text.slice("resume:".length).trim();
       setComposerText("");
@@ -284,23 +310,24 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     const signal = abort.current;
     // The id is the name of the WORK, not of the run — refine rounds and any
     // future reattach key off it, and every database row is scoped by it.
-    const explorationId = crypto.randomUUID();
+    const id = crypto.randomUUID();
     const startedAt = Date.now();
     setComposerText("");
+    setSelection(null);
     setRun({
       phase: "exploring",
       mode: "explore",
       startedAt,
       prompts: [text],
       brief: text,
-      explorationId,
+      explorationId: id,
       exploration: deriveExploration([]),
     });
     try {
       const client = Client.viewer(await transport());
       const exploration = await explore(
         client,
-        explorationId,
+        id,
         text,
         (p) =>
           setRun((prev) =>
@@ -321,12 +348,10 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           endedAt: Date.now(),
           prompts: [text],
           brief: text,
-          explorationId,
+          explorationId: id,
           exploration,
         });
-        if (exploration.invention) {
-          saveStored({ explorationId, brief: text });
-        }
+        if (exploration.invention) remember(id, text);
       }
     } catch (error) {
       console.error("phosphene: exploration failed", error);
@@ -340,7 +365,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           endedAt: Date.now(),
           prompts: [text],
           brief: text,
-          explorationId,
+          explorationId: id,
           reason: String(error).slice(0, 300),
           // Keep whatever the board had — a failed run with 7 rendered cells
           // should show 7 cells and the error, not a blank page.
@@ -348,7 +373,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         }));
       }
     }
-  }, [composerText, run.phase, doResume]);
+  }, [composerText, run.phase, doResume, remember]);
 
   /** The stop control: flips the abort flag, which breaks the stream — and
    * breaking the stream cancels the daemon-side run. The formerly-undocumented
@@ -377,7 +402,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     const text = composerText.trim();
     if (text.length === 0 || run.phase !== "done") return;
     const {
-      explorationId,
+      explorationId: id,
       exploration: prior,
       brief: priorBrief,
       prompts: priorPrompts,
@@ -388,6 +413,13 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     const signal = abort.current;
     const startedAt = Date.now();
     const prompts = [...priorPrompts, text];
+    // The preferred direction rides along as context — the agent anchors on
+    // its stored boards (render_state pins anchors from the plugin's cache).
+    // The transcript records only the user's own words.
+    const preferredDirection = preferred !== null ? invention.directions[preferred] : undefined;
+    const feedbackForAgent = preferredDirection
+      ? `The user marked "${preferredDirection.name}" (direction_index ${preferred}) as preferred — keep it the anchor: do not regress it, and bias continuity toward it where the feedback is ambiguous. Feedback: ${text}`
+      : text;
     setComposerText("");
     setRun({
       phase: "exploring",
@@ -395,7 +427,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       startedAt,
       prompts,
       brief: priorBrief,
-      explorationId,
+      explorationId: id,
       exploration: deriveExploration([]),
       base: prior,
     });
@@ -403,10 +435,10 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       const client = Client.viewer(await transport());
       const round = await refine(
         client,
-        explorationId,
+        id,
         invention.directions.map((d) => d.name),
         invention.states,
-        text,
+        feedbackForAgent,
         (p) =>
           setRun((prev) =>
             prev.phase === "exploring"
@@ -425,12 +457,10 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           endedAt: Date.now(),
           prompts,
           brief: priorBrief,
-          explorationId,
+          explorationId: id,
           exploration: merged,
         });
-        if (merged.invention) {
-          saveStored({ explorationId, brief: priorBrief });
-        }
+        if (merged.invention) remember(id, priorBrief);
       }
     } catch (error) {
       console.error("phosphene: refine failed", error);
@@ -443,13 +473,13 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           endedAt: Date.now(),
           prompts,
           brief: priorBrief,
-          explorationId,
+          explorationId: id,
           reason: String(error).slice(0, 300),
           exploration: prior,
         });
       }
     }
-  }, [composerText, run]);
+  }, [composerText, run, preferred, remember]);
 
   // ── Derived, per stream tick ─────────────────────────────────────────────
 
@@ -462,11 +492,18 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         : run.exploration;
   const invention = exploration?.invention;
   const cells = exploration?.cells ?? {};
+  const scores = exploration?.scores ?? [];
   const doneCount = Object.values(cells).filter((c) => c.phase === "done").length;
   const failedCount = Object.values(cells).filter((c) => c.phase === "failed").length;
   const totalCells = invention
     ? invention.directions.length * invention.states.length
     : 0;
+
+  const ranks =
+    invention && scores.length > 0
+      ? rankDirections(scores, invention.directions.length, rankDimension)
+      : undefined;
+  const scoredCount = ranks?.filter((r) => r.rank !== null).length ?? 0;
 
   const turns = deriveTurns({
     phase: run.phase,
@@ -474,6 +511,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     prompts: run.phase === "idle" ? [] : run.prompts,
     exploration,
     failure: run.phase === "failed" ? run.reason : undefined,
+    rankDimension,
   });
 
   // Elapsed comes from render time on stream ticks — never a timer (an
@@ -485,7 +523,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           tools: exploration?.tools.length ?? 0,
           maxTools: MAX_TOOL_CALLS[run.mode],
           kb: (exploration?.tools ?? []).reduce((n, t) => n + (t.result?.length ?? 0), 0) / 1024,
-          judges: new Set((exploration?.scores ?? []).map((s) => s.judge)).size,
+          judges: new Set(scores.map((s) => s.judge)).size,
           elapsedSec: Math.max(
             0,
             Math.round(
@@ -511,7 +549,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           : "daemon not reachable — start the stack and this clears",
   };
 
-  const stored = !busy && run.phase === "idle" ? loadStored() : undefined;
+  const lastRun = !busy && run.phase === "idle" ? history[0] : undefined;
   const composer: RailComposer = {
     value: composerText,
     placeholder:
@@ -533,11 +571,11 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       else void start();
     },
     onStop: stop,
-    resume: stored
+    resume: lastRun
       ? {
           label: "resume last",
-          title: `Reload "${stored.brief.slice(0, 60)}" from storage — no generation`,
-          onClick: () => void doResume(stored.explorationId, stored.brief),
+          title: `Reload "${lastRun.brief.slice(0, 60)}" from storage — no generation`,
+          onClick: () => void doResume(lastRun.explorationId, lastRun.brief),
         }
       : undefined,
   };
@@ -551,7 +589,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
           ? "Complete"
           : run.mode === "resume"
             ? "Replaying"
-            : (exploration?.scores.length ?? 0) > 0
+            : scores.length > 0
               ? "Reviewing"
               : "Generating";
   const statusTone: StatusTone =
@@ -562,6 +600,17 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         : run.phase === "failed"
           ? "failed"
           : "busy";
+
+  const selected =
+    selection && invention?.directions[selection.index]
+      ? {
+          direction: invention.directions[selection.index]!,
+          directionIndex: selection.index,
+          stateLabel: selection.kind === "cell" ? selection.label : undefined,
+        }
+      : null;
+  const selectedCell =
+    selection?.kind === "cell" ? cells[cellKey(selection.index, selection.label)] : undefined;
 
   return (
     <div className="ph-root" data-theme={theme} style={{ colorScheme: theme }}>
@@ -575,6 +624,11 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         health={railHealth}
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        history={history}
+        onPickHistory={(entry) => {
+          if (!busy) void doResume(entry.explorationId, entry.brief);
+        }}
+        inputRef={composerRef}
       />
       <Board
         title={run.phase === "idle" ? "Phosphene" : run.brief}
@@ -587,7 +641,12 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         statusTone={statusTone}
         invention={invention}
         cells={cells}
-        scores={exploration?.scores ?? []}
+        ranks={ranks}
+        rankDimension={rankDimension}
+        onSetDimension={setRankDimension}
+        preferredIndex={preferred}
+        selection={selection}
+        onSelect={setSelection}
         gateNote={
           health.state === "unavailable"
             ? "The daemon isn't reachable yet — start the ObjectiveAI stack and this clears on its own."
@@ -605,7 +664,32 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         }}
         onCloseZoom={() => setZoomed(null)}
       />
-      <Inspector />
+      <Inspector
+        selection={selected}
+        scores={selected ? scores.filter((s) => s.directionIndex === selected.directionIndex) : []}
+        failures={
+          selected
+            ? (exploration?.judgeFailures ?? []).filter(
+                (f) => f.directionIndex === undefined || f.directionIndex === selected.directionIndex,
+              )
+            : []
+        }
+        rank={selected ? ranks?.find((r) => r.directionIndex === selected.directionIndex) : undefined}
+        scoredCount={scoredCount}
+        rankDimension={rankDimension}
+        statesTotal={invention?.states.length ?? 0}
+        preferred={selected !== null && preferred === selected.directionIndex}
+        complete={run.phase === "done"}
+        cellHtml={selectedCell?.phase === "done" ? selectedCell.html : undefined}
+        onPrefer={() => selected && togglePrefer(selected.directionIndex)}
+        onIterate={() => {
+          if (!selected || run.phase !== "done") return;
+          const scope = `${selected.direction.name}${selected.stateLabel ? ` · ${selected.stateLabel} state` : ""}: `;
+          setComposerText((prev) => (prev.startsWith(scope) ? prev : scope + prev));
+          composerRef.current?.focus();
+        }}
+        onClose={() => setSelection(null)}
+      />
     </div>
   );
 }

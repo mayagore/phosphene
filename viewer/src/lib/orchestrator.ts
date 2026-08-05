@@ -70,9 +70,18 @@ export interface Exploration {
   cells: Record<string, CellStatus>;
   /** Score results in arrival order, verbatim from the tool. */
   scores: ScoreEvent[];
+  /** Judges that died, kept VISIBLE — a silently missing verdict reads as
+   * "never judged", which is a lie (review 01, H2). */
+  judgeFailures: JudgeFailure[];
   /** The agent's closing prose. */
   summary?: string;
   tools: ToolEvent[];
+}
+
+export interface JudgeFailure {
+  directionIndex?: number;
+  model?: string;
+  reason: string;
 }
 
 export interface ScoreEvent {
@@ -102,7 +111,7 @@ function parseArgs(raw: string): Record<string, unknown> | undefined {
  * tick and once at the end, same answer both times for the same events.
  */
 export function deriveExploration(tools: ToolEvent[], summary?: string): Exploration {
-  const out: Exploration = { cells: {}, scores: [], tools, summary };
+  const out: Exploration = { cells: {}, scores: [], judgeFailures: [], tools, summary };
 
   for (const event of tools) {
     if (event.name.endsWith("invent_directions") || event.name.endsWith("get_exploration")) {
@@ -142,8 +151,17 @@ export function deriveExploration(tools: ToolEvent[], summary?: string): Explora
     }
 
     if (event.name.endsWith("score_direction") && event.result) {
-      if (event.result.startsWith("tool call failed")) continue; // judge died; panel survives
       const args = parseArgs(event.arguments);
+      if (event.result.startsWith("tool call failed")) {
+        // The judge died. The panel survives — and says so.
+        out.judgeFailures.push({
+          directionIndex:
+            typeof args?.direction_index === "number" ? args.direction_index : undefined,
+          model: typeof args?.model === "string" ? args.model : undefined,
+          reason: event.result.slice(0, 240),
+        });
+        continue;
+      }
       try {
         const r = JSON.parse(event.result) as {
           judge?: string;
@@ -164,7 +182,15 @@ export function deriveExploration(tools: ToolEvent[], summary?: string): Explora
           });
         }
       } catch {
-        // Same policy as cells: a bad result costs that result.
+        // Not a verdict at all (an error surface without the stream's
+        // "tool call failed" prefix — e.g. a raw "MCP error …" string).
+        // A dead judge must be VISIBLE, never silently skipped.
+        out.judgeFailures.push({
+          directionIndex:
+            typeof args?.direction_index === "number" ? args.direction_index : undefined,
+          model: typeof args?.model === "string" ? args.model : undefined,
+          reason: event.result.slice(0, 240),
+        });
       }
     }
   }

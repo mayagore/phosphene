@@ -2,21 +2,24 @@
  * The center panel — the board. Directions across, shared states down; cells
  * are the artboard's true 400×720 scaled by transform, never reflowed.
  *
+ * Rank ordering NEVER moves a cell in the DOM: JSX order stays invention
+ * order with stable keys, and rank only changes each child's explicit
+ * `gridColumn`. Moving an iframe re-parses its srcdoc — a white flash per
+ * reorder — so position is style, not structure.
+ *
  * `Artboard` is memoized BY VALUE (phase + html/reason), ignoring function
  * props: the board re-derives on every stream tick and fresh cell objects
  * would defeat a shallow memo — and an unmemoized iframe re-parses its
  * srcDoc on every tick, which is the most expensive thing on the page.
  */
-import { Fragment, memo } from "react";
+import { memo, useEffect, useState } from "react";
 import type { Direction, Invention } from "../lib/directions";
 import { ARTBOARD_HEIGHT, ARTBOARD_WIDTH, cellKey, type CellStatus } from "../lib/board";
-import type { ScoreEvent } from "../lib/orchestrator";
+import { DIMENSIONS, scoreTone, type Dimension, type DirectionRank } from "../lib/scores";
 
 /** Thumbnails are the artboard's true size scaled down, never a reflow — a
  * design judged at a different width is a different design. */
 const THUMB_SCALE = 0.55;
-
-const DIMENSIONS = ["craft", "distinctiveness", "fitness", "coherence"] as const;
 
 export interface Zoomed {
   direction: Direction;
@@ -26,6 +29,11 @@ export interface Zoomed {
 
 export type StatusTone = "idle" | "busy" | "done" | "failed";
 
+export type BoardSelection =
+  | { kind: "direction"; index: number }
+  | { kind: "cell"; index: number; label: string }
+  | null;
+
 interface BoardProps {
   title: string;
   caption: string;
@@ -33,63 +41,19 @@ interface BoardProps {
   statusTone: StatusTone;
   invention?: Invention;
   cells: Record<string, CellStatus>;
-  scores: ScoreEvent[];
+  /** Display order + per-direction stats for the selected dimension;
+   * undefined until judgment exists (board stays in invention order). */
+  ranks?: DirectionRank[];
+  rankDimension: Dimension;
+  onSetDimension: (d: Dimension) => void;
+  preferredIndex: number | null;
+  selection: BoardSelection;
+  onSelect: (selection: BoardSelection) => void;
   /** Idle empty-state gate line (daemon state, in calm words). */
   gateNote?: string;
   zoomed: Zoomed | null;
   onOpen: (directionIndex: number, label: string) => void;
   onCloseZoom: () => void;
-}
-
-function DirectionCard({ direction }: { direction: Direction }) {
-  return (
-    <article className="ph-card">
-      <header className="ph-card-head">
-        <h3 className="ph-card-name">{direction.name}</h3>
-        {direction.mood && <span className="ph-card-mood">{direction.mood}</span>}
-      </header>
-      <div className="ph-swatches" aria-label="palette">
-        {direction.palette.map((hex, i) => (
-          <span
-            key={`${hex}-${i}`}
-            className="ph-swatch"
-            style={{ backgroundColor: hex }}
-            title={["background", "surface", "accent", "text", "muted"][i] + " " + hex}
-          />
-        ))}
-      </div>
-      <p className="ph-card-desc">{direction.description}</p>
-      {(direction.voice || direction.texture || direction.motifs || direction.audience) && (
-        <dl className="ph-moodboard">
-          {direction.voice && (
-            <div>
-              <dt>voice</dt>
-              <dd>{direction.voice}</dd>
-            </div>
-          )}
-          {direction.texture && (
-            <div>
-              <dt>texture</dt>
-              <dd>{direction.texture}</dd>
-            </div>
-          )}
-          {direction.motifs && (
-            <div>
-              <dt>motifs</dt>
-              <dd>{direction.motifs}</dd>
-            </div>
-          )}
-          {direction.audience && (
-            <div>
-              <dt>audience</dt>
-              <dd>{direction.audience}</dd>
-            </div>
-          )}
-        </dl>
-      )}
-      <p className="ph-card-type">{direction.typography}</p>
-    </article>
-  );
 }
 
 /**
@@ -109,7 +73,7 @@ function ArtboardImpl({
 }) {
   if (status?.phase === "done") {
     return (
-      <div className="ph-artboard">
+      <>
         <iframe
           className="ph-frame"
           sandbox=""
@@ -119,23 +83,30 @@ function ArtboardImpl({
           height={ARTBOARD_HEIGHT}
           style={{ transform: `scale(${THUMB_SCALE})` }}
         />
-        <button type="button" className="ph-artboard-open" onClick={onOpen}>
+        <button
+          type="button"
+          className="ph-artboard-open"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpen();
+          }}
+        >
           <span>open</span>
         </button>
-      </div>
+      </>
     );
   }
 
   const phase = status?.phase ?? "pending";
   return (
-    <div className={`ph-artboard ph-artboard--${phase}`}>
+    <>
       <span className="ph-artboard-note">
         {phase === "pending" && "Queued"}
         {status?.phase === "generating" && "Generating…"}
         {status?.phase === "failed" && status.reason}
       </span>
       {status?.phase === "generating" && <span className="ph-artboard-pulse" aria-hidden="true" />}
-    </div>
+    </>
   );
 }
 
@@ -155,47 +126,60 @@ const Artboard = memo(
     sameStatus(prev.status, next.status),
 );
 
-/** A direction's judge verdicts, side by side. Never averaged — with vote
- * distributions gone, the spread between judges IS the signal. */
-function ScorePanel({ scores }: { scores: ScoreEvent[] }) {
-  if (scores.length === 0) return null;
+function ZoomModal({ zoomed, onClose }: { zoomed: Zoomed; onClose: () => void }) {
+  const [showSource, setShowSource] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    setShowSource(false);
+    setCopied(false);
+  }, [zoomed]);
+
+  const copy = () => {
+    navigator.clipboard
+      .writeText(zoomed.html)
+      .then(() => setCopied(true))
+      .catch((error) => console.error("phosphene: clipboard write failed", error));
+  };
+
   return (
-    <div className="ph-scores">
-      <table className="ph-score-table">
-        <thead>
-          <tr>
-            <th>judge</th>
-            {DIMENSIONS.map((d) => (
-              <th key={d}>{d}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {scores.map((s, i) => (
-            <tr key={`${s.judge}-${i}`}>
-              <td className="ph-score-judge">{s.judge.split("/").pop()}</td>
-              {DIMENSIONS.map((d) => (
-                <td key={d} className="ph-score-cell">
-                  {s.scores[d] !== undefined ? s.scores[d].toFixed(2) : "—"}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {scores.map((s, i) => (
-        <details className="ph-score-notes" key={`notes-${s.judge}-${i}`}>
-          <summary>
-            why, per {s.judge.split("/").pop()}
-            {s.statesSeen.length > 0 && ` · saw ${s.statesSeen.length} state(s)`}
-          </summary>
-          {DIMENSIONS.filter((d) => s.notes[d]).map((d) => (
-            <p key={d}>
-              <strong>{d}.</strong> {s.notes[d]}
-            </p>
-          ))}
-        </details>
-      ))}
+    <div
+      className="ph-zoom"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${zoomed.direction.name} — ${zoomed.label}`}
+      onClick={onClose}
+    >
+      <div className="ph-zoom-panel" onClick={(e) => e.stopPropagation()}>
+        <header className="ph-zoom-head">
+          <strong className="ph-zoom-name">{zoomed.direction.name}</strong>
+          <span className="ph-zoom-state">{zoomed.label}</span>
+          <button
+            type="button"
+            className="ph-zoom-close"
+            onClick={() => setShowSource((s) => !s)}
+          >
+            {showSource ? "board" : "source"}
+          </button>
+          <button type="button" className="ph-zoom-close" onClick={copy}>
+            {copied ? "copied ✓" : "copy html"}
+          </button>
+          <button type="button" className="ph-zoom-close ph-zoom-close--last" onClick={onClose}>
+            close
+          </button>
+        </header>
+        {showSource ? (
+          <pre className="ph-zoom-source">{zoomed.html}</pre>
+        ) : (
+          <iframe
+            className="ph-zoom-frame"
+            sandbox=""
+            srcDoc={zoomed.html}
+            title={`${zoomed.direction.name} — ${zoomed.label}`}
+            width={ARTBOARD_WIDTH}
+            height={ARTBOARD_HEIGHT}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -207,12 +191,34 @@ export default function Board({
   statusTone,
   invention,
   cells,
-  scores,
+  ranks,
+  rankDimension,
+  onSetDimension,
+  preferredIndex,
+  selection,
+  onSelect,
   gateNote,
   zoomed,
   onOpen,
   onCloseZoom,
 }: BoardProps) {
+  // Display position per direction: invention order until judgment exists.
+  const positions = new Map<number, number>();
+  if (invention) {
+    if (ranks) {
+      ranks.forEach((r, pos) => positions.set(r.directionIndex, pos));
+    } else {
+      invention.directions.forEach((_, i) => positions.set(i, i));
+    }
+  }
+  const rankFor = (i: number) => ranks?.find((r) => r.directionIndex === i);
+  const scoredCount = ranks?.filter((r) => r.rank !== null).length ?? 0;
+
+  const isSelected = (i: number, label?: string) =>
+    selection !== null &&
+    selection.index === i &&
+    (selection.kind === "direction" ? label === undefined : selection.label === label);
+
   return (
     <main className="ph-center">
       <header className="ph-center-head">
@@ -220,6 +226,20 @@ export default function Board({
           <h2>{title}</h2>
           <span>{caption}</span>
         </div>
+        {scoredCount > 0 && (
+          <div className="ph-dim-chips" role="group" aria-label="Rank by dimension">
+            {DIMENSIONS.map((d) => (
+              <button
+                key={d}
+                type="button"
+                className={`ph-chip ph-chip--action${d === rankDimension ? " ph-chip--active" : ""}`}
+                onClick={() => onSetDimension(d)}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+        )}
         <span className={`ph-status-chip ph-status-chip--${statusTone}`}>{statusChip}</span>
       </header>
 
@@ -246,79 +266,78 @@ export default function Board({
               gridTemplateColumns: `max-content repeat(${invention.directions.length}, max-content)`,
             }}
           >
-            <span aria-hidden="true" />
-            {invention.directions.map((d, i) => (
-              <div key={`col-${i}`} className="ph-board-col">
-                {d.name}
+            {/* JSX stays in invention order — rank only changes gridColumn. */}
+            {invention.directions.map((d, i) => {
+              const r = rankFor(i);
+              const stat = r?.byDimension[rankDimension];
+              return (
+                <button
+                  key={`col-${i}`}
+                  type="button"
+                  className={`ph-board-col${isSelected(i) ? " ph-board-col--selected" : ""}`}
+                  style={{ gridColumn: (positions.get(i) ?? i) + 2, gridRow: 1 }}
+                  onClick={() => onSelect({ kind: "direction", index: i })}
+                >
+                  <span className="ph-board-col-name">{d.name}</span>
+                  <span className="ph-board-col-meta">
+                    {r?.rank != null && <span className="ph-board-col-rank">#{r.rank}</span>}
+                    {stat && (
+                      <span className={`ph-cell-chip ph-tone-bg--${scoreTone(stat.median)}`}>
+                        {stat.median.toFixed(2)}
+                      </span>
+                    )}
+                    {preferredIndex === i && (
+                      <span className="ph-preferred-mini" title="preferred — anchors the next round">
+                        ★
+                      </span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+            {invention.states.map((label, s) => (
+              <div
+                key={`row-${label}`}
+                className="ph-board-row"
+                style={{ gridColumn: 1, gridRow: s + 2 }}
+              >
+                {label}
               </div>
             ))}
-            {invention.states.map((label) => (
-              <Fragment key={label}>
-                <div className="ph-board-row">{label}</div>
-                {invention.directions.map((d, i) => (
-                  <Artboard
+            {invention.states.map((label, s) =>
+              invention.directions.map((d, i) => {
+                const status = cells[cellKey(i, label)];
+                const stat = rankFor(i)?.byDimension[rankDimension];
+                const phase = status?.phase ?? "pending";
+                return (
+                  <div
                     key={cellKey(i, label)}
-                    status={cells[cellKey(i, label)]}
-                    label={label}
-                    directionName={d.name}
-                    onOpen={() => onOpen(i, label)}
-                  />
-                ))}
-              </Fragment>
-            ))}
+                    className={`ph-artboard ph-artboard--${phase}${isSelected(i, label) ? " ph-artboard--selected" : ""}`}
+                    style={{ gridColumn: (positions.get(i) ?? i) + 2, gridRow: s + 2 }}
+                    onClick={() => onSelect({ kind: "cell", index: i, label })}
+                  >
+                    <Artboard
+                      status={status}
+                      label={label}
+                      directionName={d.name}
+                      onOpen={() => onOpen(i, label)}
+                    />
+                    {status?.phase === "done" && stat && (
+                      <span
+                        className={`ph-cell-chip ph-cell-chip--overlay ph-tone-bg--${scoreTone(stat.median)}${isSelected(i, label) ? " ph-cell-chip--selected" : ""}`}
+                      >
+                        {stat.median.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                );
+              }),
+            )}
           </div>
         )}
-
-        {/* Direction cards + per-direction verdicts live below the board until
-            the Inspector takes them over (Phase B of the design adoption). */}
-        {invention && (
-          <div className="ph-grid">
-            {invention.directions.map((d, i) => (
-              <DirectionCard key={`${d.name}-${i}`} direction={d} />
-            ))}
-          </div>
-        )}
-
-        {scores.length > 0 &&
-          invention?.directions.map((d, i) => {
-            const forDirection = scores.filter((s) => s.directionIndex === i);
-            if (forDirection.length === 0) return null;
-            return (
-              <div key={`scores-${i}`} className="ph-direction-scores">
-                <h3 className="ph-results-title">{d.name} — judged</h3>
-                <ScorePanel scores={forDirection} />
-              </div>
-            );
-          })}
       </div>
 
-      {zoomed && (
-        <div
-          className="ph-zoom"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`${zoomed.direction.name} — ${zoomed.label}`}
-          onClick={onCloseZoom}
-        >
-          <div className="ph-zoom-panel" onClick={(e) => e.stopPropagation()}>
-            <header className="ph-zoom-head">
-              <strong className="ph-zoom-name">{zoomed.direction.name}</strong>
-              <span className="ph-zoom-state">{zoomed.label}</span>
-              <button type="button" className="ph-zoom-close" onClick={onCloseZoom}>
-                close
-              </button>
-            </header>
-            <iframe
-              className="ph-zoom-frame"
-              sandbox=""
-              srcDoc={zoomed.html}
-              title={`${zoomed.direction.name} — ${zoomed.label}`}
-              width={ARTBOARD_WIDTH}
-              height={ARTBOARD_HEIGHT}
-            />
-          </div>
-        </div>
-      )}
+      {zoomed && <ZoomModal zoomed={zoomed} onClose={onCloseZoom} />}
     </main>
   );
 }

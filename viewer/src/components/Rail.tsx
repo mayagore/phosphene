@@ -8,9 +8,10 @@
  * ALL-CAPS eyebrows, check-dot plan steps, chip pills. All styling is our own
  * `.ph-*` classes on `--ph-*` tokens — never the viewer's utility classes.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type Ref } from "react";
 import type { ToolEvent } from "../lib/agent";
 import type { Turn } from "../lib/turns";
+import type { HistoryEntry } from "../lib/history";
 
 export interface RailHealth {
   state: "connecting" | "ready" | "unavailable";
@@ -47,6 +48,18 @@ interface RailProps {
   health: RailHealth;
   theme: "dark" | "light";
   onToggleTheme: () => void;
+  history: HistoryEntry[];
+  onPickHistory: (entry: HistoryEntry) => void;
+  inputRef?: Ref<HTMLTextAreaElement>;
+}
+
+function relativeWhen(when: number): string {
+  if (when <= 0) return "earlier";
+  const mins = Math.max(1, Math.round((Date.now() - when) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
 }
 
 function formatElapsed(totalSec: number): string {
@@ -176,8 +189,12 @@ export default function Rail({
   health,
   theme,
   onToggleTheme,
+  history,
+  onPickHistory,
+  inputRef,
 }: RailProps) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const historyRef = useRef<HTMLDetailsElement | null>(null);
 
   // Follow the conversation only when already reading the tail — never yank
   // the scroll away from someone reading an earlier turn.
@@ -202,6 +219,31 @@ export default function Rail({
           <h1>Phosphene</h1>
           <span>Agent · design transcript</span>
         </div>
+        {history.length > 0 && (
+          <details className="ph-history" ref={historyRef}>
+            <summary aria-label="Past explorations" title="Past explorations — click one to resume it">
+              ↺
+            </summary>
+            <ul className="ph-history-list">
+              {history.map((entry) => (
+                <li key={entry.explorationId}>
+                  <button
+                    type="button"
+                    className="ph-history-entry"
+                    disabled={busy}
+                    onClick={() => {
+                      historyRef.current?.removeAttribute("open");
+                      onPickHistory(entry);
+                    }}
+                  >
+                    <span className="ph-history-brief">{entry.brief}</span>
+                    <span className="ph-history-when">{relativeWhen(entry.when)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
         <button
           type="button"
           className="ph-theme-toggle"
@@ -245,6 +287,7 @@ export default function Rail({
       <div className="ph-composer">
         <textarea
           className="ph-input"
+          ref={inputRef}
           rows={3}
           value={composer.value}
           disabled={composer.inputDisabled}

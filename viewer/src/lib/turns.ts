@@ -10,8 +10,14 @@
  * (judging happens only when the user named models — the transcript must not
  * promise otherwise); no combined scores, no cost, no target language.
  */
-import type { Exploration } from "./orchestrator";
+import type { Exploration, JudgeFailure } from "./orchestrator";
 import type { ToolEvent } from "./agent";
+import {
+  DIMENSIONS,
+  DIMENSION_LABELS,
+  rankDirections,
+  type Dimension,
+} from "./scores";
 
 export type RunMode = "explore" | "refine" | "resume";
 export type RunPhase = "idle" | "exploring" | "done" | "failed";
@@ -43,11 +49,7 @@ export interface RankedItem {
   leading: boolean;
 }
 
-export interface JudgeFailure {
-  directionIndex?: number;
-  model?: string;
-  reason: string;
-}
+export type { JudgeFailure };
 
 export interface TurnsInput {
   phase: RunPhase;
@@ -58,13 +60,15 @@ export interface TurnsInput {
   exploration?: Exploration;
   /** Failure reason when phase === "failed". */
   failure?: string;
+  /** The dimension the ranked turn and board ordering follow. */
+  rankDimension: Dimension;
 }
 
 const GREETING =
   "What should we design? Describe a brief — I'll invent contrasting directions and render each across shared states. Name judge models and every verdict lands here too.";
 
 export function deriveTurns(input: TurnsInput): Turn[] {
-  const { phase, mode, prompts, exploration, failure } = input;
+  const { phase, mode, prompts, exploration, failure, rankDimension } = input;
   const turns: Turn[] = [];
 
   if (phase === "idle") {
@@ -147,6 +151,35 @@ export function deriveTurns(input: TurnsInput): Turn[] {
     activity: phase === "exploring" ? tools.slice(-8) : [],
   });
 
+  // Judgment turns — only once verdicts (or judge deaths) actually exist.
+  if (invention && scores.length > 0) {
+    const ranks = rankDirections(scores, invention.directions.length, rankDimension);
+    const scored = ranks.filter((r) => r.rank !== null);
+    if (scored.length > 0) {
+      turns.push({
+        kind: "ranked",
+        id: "ranked",
+        label: `Ranked · by ${DIMENSION_LABELS[rankDimension]}`,
+        items: ranks.map((r) => {
+          const stat = r.byDimension[rankDimension];
+          return {
+            directionIndex: r.directionIndex,
+            name: invention.directions[r.directionIndex]?.name ?? `direction ${r.directionIndex + 1}`,
+            median: stat?.median ?? null,
+            range: stat?.range ?? null,
+            judges: r.judges,
+            leading: r.rank === 1,
+          };
+        }),
+      });
+    }
+  }
+
+  const judgeFailures = exploration?.judgeFailures ?? [];
+  if (judgeFailures.length > 0) {
+    turns.push({ kind: "judges", id: "judges", failures: judgeFailures });
+  }
+
   // Refine feedbacks after the first prompt, in order.
   for (let i = 1; i < prompts.length; i++) {
     turns.push({ kind: "user", id: `user-${i}`, text: prompts[i]! });
@@ -158,6 +191,27 @@ export function deriveTurns(input: TurnsInput): Turn[] {
 
   if (phase === "done" && exploration?.summary) {
     turns.push({ kind: "message", id: "summary", text: exploration.summary });
+  }
+
+  // The verdict names each dimension's leader — never one combined number.
+  if (phase === "done" && invention && scores.length > 0) {
+    const leaders = DIMENSIONS.map((d) => {
+      const ordered = rankDirections(scores, invention.directions.length, d);
+      const top = ordered.find((r) => r.rank === 1);
+      if (!top) return null;
+      const name = invention.directions[top.directionIndex]?.name ?? `direction ${top.directionIndex + 1}`;
+      return { d, name, median: top.byDimension[d]!.median };
+    }).filter((l): l is NonNullable<typeof l> => l !== null);
+    if (leaders.length > 0) {
+      const names = new Set(leaders.map((l) => l.name));
+      const text =
+        names.size === 1
+          ? `${leaders[0]!.name} leads every judged dimension.`
+          : `Leaders — ${leaders
+              .map((l) => `${DIMENSION_LABELS[l.d]}: ${l.name} (${l.median.toFixed(2)})`)
+              .join(" · ")}.`;
+      turns.push({ kind: "message", id: "verdict", text });
+    }
   }
 
   return turns;
