@@ -567,6 +567,17 @@ export default function Phosphene({ arguments: _args }: TabProps) {
     onChange: setComposerText,
     onSubmit: () => {
       if (busy) return;
+      // `resume:<id>` is an escape hatch from EVERY phase, not just idle —
+      // a completed board must never eat a resume paste as refine feedback
+      // (it did once; the refine agent politely declined and Maya was right
+      // to be confused).
+      const text = composerText.trim();
+      if (text.toLowerCase().startsWith("resume:")) {
+        const id = text.slice("resume:".length).trim();
+        setComposerText("");
+        if (id) void doResume(id, `resumed ${id.slice(0, 8)}…`);
+        return;
+      }
       if (run.phase === "done") void sendFeedback();
       else void start();
     },
