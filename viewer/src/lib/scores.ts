@@ -31,6 +31,10 @@ export interface ScoreFacts {
   };
   palette: { declared_used: number; foreign_colours: number; adherence: number };
   fonts_declared_used: boolean | null;
+  /** Kit families whose embedded payload is actually in the documents. */
+  fonts_embedded: string[];
+  /** Inline <svg> elements across the states — drawn matter, measured. */
+  svg_used: number | null;
   javascript_free: boolean | null;
   external_free: boolean | null;
 }
@@ -61,6 +65,10 @@ export function normalizeFacts(raw: unknown): ScoreFacts | undefined {
       adherence: num(p.adherence) ?? 0,
     },
     fonts_declared_used: bool(r.fonts_declared_used),
+    fonts_embedded: Array.isArray(r.fonts_embedded)
+      ? (r.fonts_embedded as unknown[]).filter((f): f is string => typeof f === "string")
+      : [],
+    svg_used: num(r.svg_used),
     javascript_free: bool(r.javascript_free),
     external_free: bool(r.external_free),
   };

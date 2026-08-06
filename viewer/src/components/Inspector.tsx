@@ -142,6 +142,12 @@ function FactsBlock({ score, statesTotal }: { score: ScoreEvent; statesTotal: nu
         bad={facts.palette.foreign_colours > 0}
       />
       <FactRow label="declared fonts" value={check(facts.fonts_declared_used, "used", "not used")} bad={facts.fonts_declared_used === false} />
+      {facts.fonts_embedded.length > 0 && (
+        <FactRow label="embedded fonts" value={facts.fonts_embedded.join(" · ")} />
+      )}
+      {facts.svg_used !== null && (
+        <FactRow label="drawn svg" value={facts.svg_used === 0 ? "none" : `${facts.svg_used} element${facts.svg_used === 1 ? "" : "s"}`} />
+      )}
       <FactRow label="javascript" value={check(facts.javascript_free, "none", "PRESENT")} bad={facts.javascript_free === false} />
       <FactRow label="external resources" value={check(facts.external_free, "none", "PRESENT")} bad={facts.external_free === false} />
       {score.statesSeen.length > 0 && score.statesSeen.length < statesTotal && (
@@ -292,7 +298,12 @@ export default function Inspector({
             )}
           </dl>
         )}
-        <p className="ph-card-type">{direction.typography}</p>
+        <p className="ph-card-type">
+          {direction.typography}
+          {direction.families && direction.families.length > 0 && (
+            <> · embedded: {direction.families.join(", ")}</>
+          )}
+        </p>
       </section>
 
       <div className="ph-insp-actions">

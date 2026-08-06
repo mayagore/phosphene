@@ -21,6 +21,8 @@ path = "src/main.rs"
 objectiveai-mcp-plugin-framework = "2.2.15"
 # Only to consume the response stream from a CLI command.
 futures = "0.3.33"
+# Embedding the font kit's woff2 payloads into generated documents.
+base64 = "0.22"
 # `rmcp` is deliberately NOT a direct dependency: the framework
 # re-exports the exact one it was built against, so the two can never
 # skew into a `ToolRouter<S>` that does not fit `serve`. The

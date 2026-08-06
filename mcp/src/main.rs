@@ -17,6 +17,8 @@
 //! (9/9 artboards, 0 failures, 74.5s). Where a line here looks arbitrary, the
 //! reason is in the comment beside it.
 
+mod fonts;
+
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -121,8 +123,10 @@ const RENDER_TIMEOUT: Duration = Duration::from_secs(600);
 const SCORE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// An anchor rides in as INPUT on every sibling state, so it is paid for once
-/// per sibling. Generous, but bounded.
-const MAX_ANCHOR_CHARS: usize = 24_000;
+/// per sibling. Generous, but bounded. Raised from 24K with the unboxing:
+/// SVG-rich documents are legitimately bigger, and font payloads are elided
+/// before the anchor ever reaches a prompt, so the budget buys real markup.
+const MAX_ANCHOR_CHARS: usize = 48_000;
 
 // ── Prompts ─────────────────────────────────────────────────────────────
 //
@@ -142,16 +146,23 @@ For each direction provide:
 - name: Two-word evocative name (e.g. "Midnight Trust", "Paper Carnival")
 - description: 2-3 sentences on visual strategy and emotional target. What does the viewer feel? What design tradition does this reference?
 - palette: a JSON ARRAY of exactly 5 hex color strings in this order: background, surface, accent, text, muted — e.g. ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"]. Never an object. Background and text MUST have sufficient contrast for readability. Accent should be distinct from background.
-- typography: A system font stack for headings and body (e.g. "Georgia, serif / system-ui, sans-serif"). No Google Fonts or custom fonts — only fonts available without loading external resources. Choose stacks a working designer would ship today; novelty stacks (Comic Sans MS, Impact, Papyrus) only when the direction genuinely demands them. Describe what the type DOES (e.g. "high-contrast serif display over quiet grotesque body") rather than leaning on a brand-name face — named display faces are licensing landmines in real use.
+- families: a JSON ARRAY of 0-2 REAL typeface families from this kit (exact names; they will be embedded in the rendered documents): %FONT_MENU%. Pick faces that ARE the direction's voice — a direction that would sing in one of these should claim it; a direction whose era or culture calls for plain system type should take none.
+- typography: how the type behaves — pairing, scale, contrast, case (e.g. "Fraunces display at poster scale over quiet grotesque body, generous smallcap labels"). If families is empty, name a system stack for headings and body (e.g. "Georgia, serif / system-ui, sans-serif").
 - mood: 2-3 word mood descriptor
 - voice: the copy tone this interface speaks in, with 1-2 example phrases in that voice — real UI copy, not description
-- texture: the direction's material language in CSS-ACHIEVABLE terms — gradients, grain, layered shadows, border treatments, repeating patterns. No images exist, so every texture must be drawable in CSS
+- texture: the direction's material language — CSS surfaces (gradients, grain, layered shadows, border treatments, repeating patterns) AND drawn matter: inline SVG illustration, ornament, patterned grounds, decorative rules. Name what should be DRAWN, not just tinted
 - motifs: the 2-3 repeatable marks that make this direction recognizable at a glance (e.g. "hairline double-rules, illuminated initial caps, wax-seal badges")
 - audience: one sentence on who this direction is FOR — their taste, their context
 
 Also provide "states": a JSON array of exactly 3 state names (views/screens/compositions) that make sense for this brief — a fintech app might get ["landing", "portfolio", "transactions"]; a concert poster might get ["announce", "lineup", "tickets"]. These are SHARED across all directions: every direction will render exactly these 3 states so they can be compared side by side. Do not default to "hero/dashboard/settings" unless those genuinely fit.
 
 Respond with a JSON object: {"directions": [...], "states": ["...", "...", "..."]}."##;
+
+/// [`INVENT_PROMPT`] with the font-kit menu spliced in. A placeholder rather
+/// than `format!` because the prompt is full of literal JSON braces.
+fn invent_prompt() -> String {
+    INVENT_PROMPT.replace("%FONT_MENU%", &fonts::menu())
+}
 
 /// The `xmlns` clause costs the model nothing and is what makes the
 /// SVG-`foreignObject` → canvas rasterization path work — verified available
@@ -165,9 +176,10 @@ fn requirements() -> String {
 - Set html and body to width: {ARTBOARD_WIDTH}px; height: {ARTBOARD_HEIGHT}px; margin: 0; overflow: hidden
 - All styles in a <style> tag — no inline styles except where unavoidable
 - CSS flexbox and grid are both allowed. No media queries, no animations, no JavaScript
-- No external resources (no Google Fonts, no images, no CDN links)
+- No external resources: nothing fetched over http(s) — no CDN links, no remote images, no Google Fonts. Everything the document needs lives inside it
+- Inline SVG is a first-class material: illustration, iconography, ornament, patterned or textured grounds, decorative rules, expressive display lettering. Draw with <svg> elements, gradients, filters and <pattern> freely — a direction whose texture or motifs call for drawn matter should get REAL drawn matter, not a plain tinted rectangle standing in for it
+- If the direction lists embedded font families, they are ALREADY loaded in this document by the tool — just use them: font-family: 'Family Name', <sensible fallback>. Do NOT write @font-face yourself. If it lists none, use the typography field's system stacks
 - Valid XHTML: self-closing tags (<meta/>, <br/>), quoted attributes, no bare ampersands
-- Use the font stacks from the typography field (they are system fonts)
 
 Design quality:
 - Use the palette semantically: bg= for page background, surface= for cards/panels, accent= for buttons and interactive highlights, text= for body copy, muted= for secondary text and borders
@@ -175,7 +187,8 @@ Design quality:
 - Use realistic placeholder content — real-looking names, dollar amounts, dates, titles — not "Lorem ipsum" or "John Doe"
 - Typography hierarchy: clear distinction between headings, subheadings, body, and labels
 - Composition: consider visual weight distribution, focal points, and reading flow
-- Contemporary baseline: this must read as a screen designed THIS year — generous line-height and spacing, a restrained border palette, soft elevation or confident flat surfaces, a large legible type scale, current component idioms. Dated web styling (2010s bootstrap cards, heavy bevels, tiny dense text) only when the direction's era explicitly calls for it
+- The DIRECTION leads — its era, culture, materials and motifs decide what this screen looks like, not web convention. Default-web grammar (a header bar, a hero, three rounded cards, a full-width button) is a failure of the assignment unless this direction genuinely calls for it. Ask: could this board belong to any product? If yes, push the direction's character harder — into the layout itself, not just the colours
+- Craft still counts: whatever the era, the screen must be legible, composed, and deliberate. Character is not an excuse for mess
 
 Completeness — a finished screen that FITS:
 - The frame is exactly {ARTBOARD_WIDTH}×{ARTBOARD_HEIGHT} and DOES NOT SCROLL. `overflow: hidden` means anything past the bottom edge is invisible, not reachable. Everything you draw must fit inside it.
@@ -242,8 +255,14 @@ pub struct Direction {
     pub description: String,
     /// Exactly 5 hex strings, in slot order: bg, surface, accent, text, muted.
     pub palette: Vec<String>,
-    /// A system font stack — headings / body.
+    /// How the type behaves — pairing, scale, contrast; or a system stack
+    /// when no kit families are claimed.
     pub typography: String,
+    /// Embedded font-kit families (exact kit names, ≤2) — the tool injects
+    /// their `@font-face` blocks into every rendered document. Optional so
+    /// pre-kit stored explorations still parse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub families: Option<Vec<String>>,
     /// 2-3 word mood descriptor.
     pub mood: String,
     /// Copy voice: the tone the interface speaks in, with 1-2 example
@@ -400,8 +419,14 @@ pub struct Facts {
     pub contrast: ContrastFacts,
     /// Does the document actually use its declared palette, or drift?
     pub palette: PaletteFacts,
-    /// Do the declared font stacks appear in the CSS?
+    /// Do the declared fonts appear in the CSS? With kit families claimed,
+    /// every family must be USED (outside the injected blocks); otherwise the
+    /// declared stacks are checked.
     pub fonts_declared_used: bool,
+    /// Kit families whose embedded payload is actually in the documents.
+    pub fonts_embedded: Vec<String>,
+    /// Inline `<svg>` elements across the states — drawn matter, measured.
+    pub svg_used: u32,
     /// `<script` never appears (the sandbox enforces it; this reports it).
     pub javascript_free: bool,
     /// No `src=`/`href=`/`url(` pointing at http(s). The xmlns URI is exempt.
@@ -816,11 +841,40 @@ fn normalize_direction(raw: &serde_json::Value, index: usize) -> Direction {
             Some(typography) => typography.to_string(),
             None => "system-ui, sans-serif".to_string(),
         },
+        families: raw
+            .get("families")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                let names: Vec<String> = items
+                    .iter()
+                    .filter_map(|f| f.as_str().map(str::to_string))
+                    .collect();
+                // Unknown names cost themselves, not the direction.
+                fonts::canonical(&names)
+            })
+            .filter(|families| !families.is_empty()),
         mood: field("mood"),
         voice: opt_field(raw, "voice"),
         texture: opt_field(raw, "texture"),
         motifs: opt_field(raw, "motifs"),
         audience: opt_field(raw, "audience"),
+    }
+}
+
+/// The embedded-families line, wherever a direction is described to a
+/// working model. The families are a FACT about the document (the tool
+/// injects them), so every reader — renderer, reviser, judge — is told.
+fn families_line(direction: &Direction) -> String {
+    match &direction.families {
+        Some(families) if !families.is_empty() => format!(
+            "\nEmbedded fonts (already loaded in the document — use via font-family): {}",
+            families
+                .iter()
+                .map(|f| format!("'{f}'"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => String::new(),
     }
 }
 
@@ -929,18 +983,21 @@ fn judge_user_prompt(brief: &str, d: &Direction, ordered: &[(String, String)]) -
         .collect::<Vec<_>>()
         .join(", ");
     let mut out = format!(
-        "Brief: {brief}\n\nDirection: \"{}\" — {}\nPalette: {palette}\nTypography: {}\nMood: {}{}\n",
+        "Brief: {brief}\n\nDirection: \"{}\" — {}\nPalette: {palette}\nTypography: {}\nMood: {}{}{}\n",
         d.name,
         d.description,
         d.typography,
         d.mood,
+        families_line(d),
         // The judges see the same moodboard the renderer aimed for — audience
         // gives fitness something real; texture and motifs give craft and
         // distinctiveness a stated intent to hold the pixels against.
         moodboard_lines(d),
     );
     for (label, html) in ordered {
-        out.push_str(&format!("\n─── state \"{label}\" ───\n{html}\n"));
+        // Payloads elided: a judge needs the @font-face NAME, never its bytes.
+        let lean = fonts::elide_font_payloads(html);
+        out.push_str(&format!("\n─── state \"{label}\" ───\n{lean}\n"));
     }
     out
 }
@@ -1051,16 +1108,44 @@ fn compute_facts(direction: &Direction, artboards: &[(String, String)]) -> Facts
         (declared_hits as f64 / total as f64 * 100.0).round() / 100.0
     };
 
-    // First family of each declared stack ("Georgia, serif / system-ui, …" →
-    // Georgia, system-ui), checked case-insensitively against the CSS.
+    // Declared-type usage is measured OUTSIDE the injected kit blocks — an
+    // embedded face nobody set in a `font-family` rule was declared, not used.
+    let lean_lower: String = artboards
+        .iter()
+        .map(|(_, h)| fonts::strip_kit_faces(h).to_lowercase())
+        .collect();
     let lower = all_html.to_lowercase();
-    let fonts_declared_used = direction
-        .typography
-        .split('/')
-        .filter_map(|half| half.split(',').next())
-        .map(|f| f.trim().trim_matches(|c| c == '"' || c == '\'').to_lowercase())
-        .filter(|f| !f.is_empty())
-        .all(|f| lower.contains(&f));
+    let fonts_declared_used = match &direction.families {
+        // Kit families claimed: every one must actually be USED in the css.
+        Some(families) if !families.is_empty() => families
+            .iter()
+            .all(|family| lean_lower.contains(&family.to_lowercase())),
+        // No kit claim: first family of each declared stack ("Georgia, serif /
+        // system-ui, …" → Georgia, system-ui), case-insensitively.
+        _ => direction
+            .typography
+            .split('/')
+            .filter_map(|half| half.split(',').next())
+            .map(|f| f.trim().trim_matches(|c| c == '"' || c == '\'').to_lowercase())
+            .filter(|f| !f.is_empty())
+            .all(|f| lean_lower.contains(&f)),
+    };
+
+    // What the kit actually delivered: families whose @font-face payload is
+    // present in the stored documents.
+    let fonts_embedded: Vec<String> = direction
+        .families
+        .iter()
+        .flatten()
+        .filter(|family| {
+            lower.contains(&format!("font-family:'{}';", family).to_lowercase())
+                && lower.contains("data:font/woff2;base64,")
+        })
+        .cloned()
+        .collect();
+
+    // Drawn matter, counted — the unboxing's other material.
+    let svg_used = lower.matches("<svg").count() as u32;
 
     // The required xmlns URI is `xmlns="http…"` — none of these needles match
     // it, so compliant documents pass without an exemption list.
@@ -1077,6 +1162,8 @@ fn compute_facts(direction: &Direction, artboards: &[(String, String)]) -> Facts
         },
         palette: PaletteFacts { declared_used, foreign_colours, adherence },
         fonts_declared_used,
+        fonts_embedded,
+        svg_used,
         javascript_free: !lower.contains("<script"),
         external_free,
     }
@@ -1126,6 +1213,7 @@ mod facts_tests {
                 .to_vec(),
             typography: "Georgia, serif / system-ui, sans-serif".into(),
             mood: String::new(),
+            families: None,
             voice: None,
             texture: None,
             motifs: None,
@@ -1151,6 +1239,7 @@ mod facts_tests {
             palette: vec!["#000000".into(); 5],
             typography: "serif".into(),
             mood: String::new(),
+            families: None,
             voice: None,
             texture: None,
             motifs: None,
@@ -1163,6 +1252,49 @@ mod facts_tests {
         let clean = r#"<html xmlns="http://www.w3.org/1999/xhtml"><body/></html>"#;
         let facts = compute_facts(&d, &[("s".into(), clean.into())]);
         assert!(facts.external_free);
+    }
+
+    #[test]
+    fn kit_facts_measure_embedding_usage_and_svg() {
+        let d = Direction {
+            name: "t".into(),
+            description: String::new(),
+            palette: vec!["#000000".into(); 5],
+            typography: "Oswald poster display over quiet body".into(),
+            families: Some(vec!["Oswald".into(), "Fraunces".into()]),
+            mood: String::new(),
+            voice: None,
+            texture: None,
+            motifs: None,
+            audience: None,
+        };
+        // Oswald: injected AND used in body css. Fraunces: injected, never used.
+        let html = "<style>\
+                    @font-face{font-family:'Oswald';font-style:normal;font-weight:400;\
+                    src:url(data:font/woff2;base64,AAAA) format('woff2')}\n\
+                    @font-face{font-family:'Fraunces';font-style:normal;font-weight:400;\
+                    src:url(data:font/woff2;base64,BBBB) format('woff2')}\n\
+                    h1{font-family:'Oswald',sans-serif}</style>\
+                    <svg viewBox=\"0 0 8 8\"><circle r=\"4\"/></svg>";
+        let facts = compute_facts(&d, &[("s".into(), html.into())]);
+        assert_eq!(
+            facts.fonts_embedded,
+            vec!["Oswald".to_string(), "Fraunces".to_string()]
+        );
+        assert_eq!(facts.svg_used, 1);
+        // Fraunces is claimed but never set in a rule — declared-used fails.
+        assert!(!facts.fonts_declared_used);
+        // An embedded data: font must never trip the external check.
+        assert!(facts.external_free);
+
+        // With only the used family claimed, the check passes.
+        let d_used = Direction {
+            families: Some(vec!["Oswald".into()]),
+            ..d
+        };
+        let facts = compute_facts(&d_used, &[("s".into(), html.into())]);
+        assert!(facts.fonts_declared_used);
+        assert_eq!(facts.fonts_embedded, vec!["Oswald".to_string()]);
     }
 
     #[test]
@@ -1377,7 +1509,7 @@ impl Plugin {
         }
 
         let text = run_agent(
-            INVENT_PROMPT,
+            &invent_prompt(),
             brief,
             INVENTION_UPSTREAM,
             INVENTION_MODEL,
@@ -1478,16 +1610,25 @@ impl Plugin {
             .join(", ");
 
         let user = format!(
-            "Direction: \"{}\" — {}\nPalette: {swatches}\nTypography: {}\nMood: {}\n\
+            "Direction: \"{}\" — {}\nPalette: {swatches}\nTypography: {}\nMood: {}{}{}\n\
              State to render: \"{label}\"",
             args.direction.name,
             args.direction.description,
             args.direction.typography,
             args.direction.mood,
+            families_line(&args.direction),
+            // The renderer gets the WHOLE moodboard — voice, texture, motifs,
+            // audience. It never did before E1; the fields flowed to judges
+            // while the one model actually drawing pixels was told only the
+            // palette and the mood. (The formulaic-output diagnosis, cause 4.)
+            moodboard_lines(&args.direction),
         );
 
+        // Anchors reach prompts with font payloads elided — the declaration
+        // (and family name) survives; 30 KB of base64 does not.
+        let lean_anchor = anchor_html.as_deref().map(fonts::elide_font_payloads);
         let text = run_agent(
-            &render_system_prompt(&states, label, anchor_html.as_deref()),
+            &render_system_prompt(&states, label, lean_anchor.as_deref()),
             &user,
             GENERATION_UPSTREAM,
             GENERATION_MODEL,
@@ -1503,6 +1644,12 @@ impl Plugin {
         .await?;
 
         let html = extract_html(&text, label).map_err(internal)?;
+        // The kit keeps its promise: the families the direction claims are
+        // embedded HERE, server-side — the model only ever names them.
+        let html = match &args.direction.families {
+            Some(families) => fonts::inject(&html, families).await,
+            None => html,
+        };
 
         // Persist for score_direction and refine_state — the document must
         // never ride through the agent's context, and it must OUTLIVE this
@@ -1646,9 +1793,15 @@ impl Plugin {
             _ => None,
         };
 
+        // Both the anchor and the document under revision reach the prompt
+        // with font payloads elided — the model re-emits the markup it is
+        // given, and 30 KB of echoed base64 would burn budget AND corrupt on
+        // the way through. Injection restores the real fonts afterwards.
+        let lean_anchor = anchor_html.as_deref().map(fonts::elide_font_payloads);
+        let lean_current = fonts::elide_font_payloads(&current);
         let text = run_agent(
-            &refine_system_prompt(&states, label, anchor_html.as_deref()),
-            &refine_user_prompt(&direction, label, &current, feedback),
+            &refine_system_prompt(&states, label, lean_anchor.as_deref()),
+            &refine_user_prompt(&direction, label, &lean_current, feedback),
             GENERATION_UPSTREAM,
             GENERATION_MODEL,
             // Revision is judgment about what NOT to touch — thinking on.
@@ -1659,6 +1812,12 @@ impl Plugin {
         )
         .await?;
         let html = extract_html(&text, label).map_err(internal)?;
+        // Re-embed: the revision echoed elided payloads (or dropped the
+        // blocks); inject strips any kit block first, then adds the real ones.
+        let html = match &direction.families {
+            Some(families) => fonts::inject(&html, families).await,
+            None => html,
+        };
 
         sqlx::query(
             "UPDATE phosphene_artboards

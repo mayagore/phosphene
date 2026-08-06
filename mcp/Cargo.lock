@@ -2037,6 +2037,7 @@ dependencies = [
 name = "phosphene"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "futures",
  "objectiveai-mcp-plugin-framework",
  "schemars",

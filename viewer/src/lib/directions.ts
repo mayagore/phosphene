@@ -14,6 +14,9 @@ export interface Direction {
   /** Exactly 5 hex strings, in slot order: bg, surface, accent, text, muted. */
   palette: string[];
   typography: string;
+  /** Embedded font-kit families (≤2) — the MCP half injects their
+   * @font-face blocks into every rendered document. */
+  families?: string[];
   mood: string;
   /** Moodboard fields — optional; pre-2026-08-04 explorations lack them. */
   voice?: string;
@@ -48,6 +51,9 @@ function normalizeDirection(raw: unknown, index: number): Direction {
     description: typeof d.description === "string" ? d.description : "",
     palette: palette.length === 5 ? palette : FALLBACK_PALETTE,
     typography: typeof d.typography === "string" ? d.typography : "system-ui, sans-serif",
+    families: Array.isArray(d.families)
+      ? d.families.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
+      : undefined,
     mood: typeof d.mood === "string" ? d.mood : "",
     voice: typeof d.voice === "string" && d.voice.trim() ? d.voice : undefined,
     texture: typeof d.texture === "string" && d.texture.trim() ? d.texture : undefined,
