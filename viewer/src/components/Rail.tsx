@@ -50,6 +50,10 @@ interface RailProps {
   onToggleTheme: () => void;
   history: HistoryEntry[];
   onPickHistory: (entry: HistoryEntry) => void;
+  /** Present when a session is loaded: clears the tab back to First run.
+   * Client-side only — every exploration stays in the database, one resume
+   * away. */
+  onNewSession?: () => void;
   inputRef?: Ref<HTMLTextAreaElement>;
 }
 
@@ -232,6 +236,7 @@ export default function Rail({
   onToggleTheme,
   history,
   onPickHistory,
+  onNewSession,
   inputRef,
 }: RailProps) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
@@ -260,40 +265,50 @@ export default function Rail({
           <h1>Phosphene</h1>
           <span>Agent · design transcript</span>
         </div>
-        {history.length > 0 && (
-          <details className="ph-history" ref={historyRef}>
-            <summary aria-label="Past explorations" title="Past explorations — click one to resume it">
-              ↺
-            </summary>
-            <ul className="ph-history-list">
-              {history.map((entry) => (
-                <li key={entry.explorationId}>
-                  <button
-                    type="button"
-                    className="ph-history-entry"
-                    disabled={busy}
-                    onClick={() => {
-                      historyRef.current?.removeAttribute("open");
-                      onPickHistory(entry);
-                    }}
-                  >
-                    <span className="ph-history-brief">{entry.brief}</span>
-                    <span className="ph-history-when">{relativeWhen(entry.when)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
-        <button
-          type="button"
-          className="ph-theme-toggle"
-          onClick={onToggleTheme}
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-          title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-        >
-          {theme === "dark" ? "☀" : "☾"}
-        </button>
+        <div className="ph-rail-tools">
+          {onNewSession && (
+            <button
+              type="button"
+              className="ph-rail-new"
+              onClick={onNewSession}
+              title="Clear the tab back to First run — every exploration stays stored, one resume away"
+            >
+              new
+            </button>
+          )}
+          {history.length > 0 && (
+            <details className="ph-history" ref={historyRef}>
+              <summary title="Past explorations — click one to resume it">↺</summary>
+              <ul className="ph-history-list">
+                {history.map((entry) => (
+                  <li key={entry.explorationId}>
+                    <button
+                      type="button"
+                      className="ph-history-entry"
+                      disabled={busy}
+                      onClick={() => {
+                        historyRef.current?.removeAttribute("open");
+                        onPickHistory(entry);
+                      }}
+                    >
+                      <span className="ph-history-brief">{entry.brief}</span>
+                      <span className="ph-history-when">{relativeWhen(entry.when)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <button
+            type="button"
+            className="ph-theme-toggle"
+            onClick={onToggleTheme}
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
+        </div>
       </header>
 
       {budget && (

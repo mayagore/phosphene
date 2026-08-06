@@ -259,13 +259,41 @@
   background: var(--ph-color-surface-raised);
 }
 
+/* The rail's session tools: new · history · theme. */
+.ph-rail-tools {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--ph-spacing-1);
+  flex: none;
+}
+
+.ph-rail-tools .ph-theme-toggle { margin-left: 0; }
+
+.ph-rail-new {
+  font: inherit;
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  height: 28px;
+  padding: 0 var(--ph-spacing-3);
+  display: flex;
+  align-items: center;
+  color: var(--ph-color-text-secondary);
+  background: transparent;
+  border: 1px solid var(--ph-color-border-strong);
+  border-radius: var(--ph-radius-sm);
+  cursor: pointer;
+}
+
+.ph-rail-new:hover {
+  color: var(--ph-color-text-primary);
+  background: var(--ph-color-surface-raised);
+}
+
 /* Past explorations — a native <details> popover; every entry is a resume key. */
 .ph-history {
   position: relative;
-  margin-left: auto;
 }
-
-.ph-rail-head .ph-history + .ph-theme-toggle { margin-left: 0; }
 
 .ph-history summary {
   list-style: none;

@@ -639,6 +639,18 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         onPickHistory={(entry) => {
           if (!busy) void doResume(entry.explorationId, entry.brief);
         }}
+        onNewSession={
+          run.phase === "done" || run.phase === "failed"
+            ? () => {
+                // Client-side reset only — the exploration stays in the
+                // database and in history, one resume away.
+                setRun({ phase: "idle" });
+                setSelection(null);
+                setZoomed(null);
+                setComposerText("");
+              }
+            : undefined
+        }
         inputRef={composerRef}
       />
       <Board
