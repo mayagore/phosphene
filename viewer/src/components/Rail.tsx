@@ -76,10 +76,9 @@ function CheckDot({ done }: { done: boolean }) {
   );
 }
 
-function Activity({ tools, aih }: { tools: ToolEvent[]; aih?: string }) {
-  if (tools.length === 0) return null;
+function ActivityRows({ tools }: { tools: ToolEvent[] }) {
   return (
-    <div className="ph-activity" aria-live="polite">
+    <>
       {tools.map((tool, i) => (
         <div className="ph-activity-row" key={`${tool.name}-${i}`}>
           <span
@@ -92,12 +91,36 @@ function Activity({ tools, aih }: { tools: ToolEvent[]; aih?: string }) {
           </span>
         </div>
       ))}
-      {aih && <code className="ph-activity-aih">{aih.split("/").pop()}</code>}
-    </div>
+    </>
   );
 }
 
-function renderTurn(turn: Turn, aih: string | undefined) {
+/** Live: the last-8 feed of what the agent is doing right now. Settled: the
+ * FULL call log, kept — the viewer exists so a human can see the agent's
+ * work, and the work IS these calls. */
+function Activity({ tools, aih, live }: { tools: ToolEvent[]; aih?: string; live: boolean }) {
+  if (tools.length === 0) return null;
+  if (live) {
+    return (
+      <div className="ph-activity" aria-live="polite">
+        <ActivityRows tools={tools.slice(-8)} />
+        {aih && <code className="ph-activity-aih">{aih.split("/").pop()}</code>}
+      </div>
+    );
+  }
+  const kb = tools.reduce((n, t) => n + (t.result?.length ?? 0), 0) / 1024;
+  return (
+    <details className="ph-activity ph-activity--log">
+      <summary>
+        {tools.length} tool call{tools.length === 1 ? "" : "s"} · {kb.toFixed(0)} KB — the run's
+        full log
+      </summary>
+      <ActivityRows tools={tools} />
+    </details>
+  );
+}
+
+function renderTurn(turn: Turn, aih: string | undefined, busy: boolean) {
   switch (turn.kind) {
     case "user":
       return (
@@ -114,6 +137,20 @@ function renderTurn(turn: Turn, aih: string | undefined) {
           <p>{turn.text}</p>
         </div>
       );
+    case "toolkit":
+      return (
+        <div className="ph-turn-card" key={turn.id}>
+          <div className="ph-eyebrow">Your agent's tools</div>
+          <div className="ph-toolkit">
+            {turn.tools.map((tool) => (
+              <div className="ph-toolkit-tool" key={tool.name}>
+                <code className="ph-toolkit-name">{tool.name}</code>
+                <span className="ph-toolkit-what">{tool.what}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
     case "plan":
       return (
         <div className="ph-turn-card" key={turn.id}>
@@ -127,7 +164,7 @@ function renderTurn(turn: Turn, aih: string | undefined) {
               </li>
             ))}
           </ul>
-          <Activity tools={turn.activity} aih={aih} />
+          <Activity tools={turn.activity} aih={aih} live={busy} />
         </div>
       );
     case "ranked":
@@ -266,7 +303,7 @@ export default function Rail({
             aria-hidden="true"
           />
           <span>
-            {budget.tools}/{budget.maxTools} tools · {budget.kb.toFixed(0)} KB
+            {budget.tools}/{budget.maxTools} calls · {budget.kb.toFixed(0)} KB
             {budget.judges > 0 && ` · ${budget.judges} judge${budget.judges === 1 ? "" : "s"}`}
             {" · "}
             {formatElapsed(budget.elapsedSec)}
@@ -275,7 +312,7 @@ export default function Rail({
       )}
 
       <div className="ph-transcript" ref={transcriptRef}>
-        {turns.map((turn) => renderTurn(turn, busy ? aih : undefined))}
+        {turns.map((turn) => renderTurn(turn, busy ? aih : undefined, busy))}
       </div>
 
       {chips.length > 0 && (

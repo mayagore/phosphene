@@ -481,6 +481,45 @@
   color: var(--ph-color-text-muted);
 }
 
+/* The settled run's full call log — collapsed, kept, inspectable. */
+.ph-activity--log summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-text-muted);
+}
+
+.ph-activity--log summary::-webkit-details-marker { display: none; }
+.ph-activity--log summary:hover { color: var(--ph-color-text-secondary); }
+.ph-activity--log[open] summary { margin-bottom: var(--ph-spacing-1); }
+
+/* The agent's toolkit — an agent is its tools; the idle rail says which. */
+.ph-toolkit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ph-spacing-2);
+}
+
+.ph-toolkit-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ph-toolkit-name {
+  font-family: ui-monospace, monospace;
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-primary);
+}
+
+.ph-toolkit-what {
+  font-size: var(--ph-text-caption);
+  line-height: var(--ph-text-caption--line-height);
+  color: var(--ph-color-text-muted);
+}
+
 /* RANKED · BY <dimension> rows (emitted once judgment exists). */
 .ph-ranked-rows {
   list-style: none;

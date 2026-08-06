@@ -60,9 +60,24 @@ Read the user's feedback and call phosphene_refine_state once per (direction_ind
 
 Then one closing sentence. Do not restate the documents.`;
 
-/** Each driver's hard tool budget, mirrored for the run-budget chip — the
- * display shows the SAME ceiling the run is actually bounded by. */
+/** Each driver's hard tool-CALL budget, mirrored for the run-budget chip —
+ * the display shows the SAME ceiling the run is actually bounded by. (A
+ * budget of calls, not of tools: the toolkit below is six.) */
 export const MAX_TOOL_CALLS = { explore: 16, refine: 9, resume: 10 } as const;
+
+/** The agent's toolkit — display-side mirror of the MCP half's six tools
+ * (mcp/src/main.rs). An agent is its JSON and its tools (docs/platform/
+ * 05-agent-identity.md); the viewer exists to let a human SEE that agent
+ * work, so the toolkit is named on the surface, prefixed exactly as the
+ * agent receives it. */
+export const PHOSPHENE_TOOLKIT = [
+  { name: "phosphene_invent_directions", what: "invents contrasting directions and the shared states from your brief" },
+  { name: "phosphene_render_state", what: "renders one direction × state artboard at 400×720" },
+  { name: "phosphene_refine_state", what: "revises one artboard from your feedback" },
+  { name: "phosphene_score_direction", what: "one judge model's verdict — four dimensions, written whys, measured facts" },
+  { name: "phosphene_get_exploration", what: "reads a stored exploration's directions and states" },
+  { name: "phosphene_get_state", what: "reads one stored artboard" },
+] as const;
 
 export interface Exploration {
   invention?: Invention;

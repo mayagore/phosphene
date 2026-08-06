@@ -10,7 +10,7 @@
  * (judging happens only when the user named models — the transcript must not
  * promise otherwise); no combined scores, no cost, no target language.
  */
-import type { Exploration, JudgeFailure } from "./orchestrator";
+import { PHOSPHENE_TOOLKIT, type Exploration, type JudgeFailure } from "./orchestrator";
 import type { ToolEvent } from "./agent";
 import {
   DIMENSIONS,
@@ -25,9 +25,10 @@ export type RunPhase = "idle" | "exploring" | "done" | "failed";
 export type Turn =
   | { kind: "user"; id: string; text: string }
   | { kind: "message"; id: string; text: string }
+  /* An agent is its tools — the idle transcript names the toolkit so the
+   * human knows what they're about to watch. */
+  | { kind: "toolkit"; id: string; tools: ReadonlyArray<{ name: string; what: string }> }
   | { kind: "plan"; id: string; steps: PlanStep[]; activity: ToolEvent[] }
-  /* ranked + judges land in Phase B — the union carries them now so the
-   * renderer is written once. */
   | { kind: "ranked"; id: string; label: string; items: RankedItem[] }
   | { kind: "judges"; id: string; failures: Array<JudgeFailure & { name?: string }> }
   | { kind: "error"; id: string; text: string };
@@ -73,6 +74,7 @@ export function deriveTurns(input: TurnsInput): Turn[] {
 
   if (phase === "idle") {
     turns.push({ kind: "message", id: "greeting", text: GREETING });
+    turns.push({ kind: "toolkit", id: "toolkit", tools: PHOSPHENE_TOOLKIT });
     return turns;
   }
 
@@ -144,12 +146,9 @@ export function deriveTurns(input: TurnsInput): Turn[] {
             : []),
         ];
 
-  turns.push({
-    kind: "plan",
-    id: "plan",
-    steps,
-    activity: phase === "exploring" ? tools.slice(-8) : [],
-  });
+  // The full call record rides with the plan — live it's the last-8 feed,
+  // afterwards it stays inspectable as the log of what the agent DID.
+  turns.push({ kind: "plan", id: "plan", steps, activity: tools });
 
   // Judgment turns — only once verdicts (or judge deaths) actually exist.
   if (invention && scores.length > 0) {
