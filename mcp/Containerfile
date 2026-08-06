@@ -22,6 +22,9 @@ WORKDIR /build
 # No `--locked` for the same reason: it fails outright when there is no
 # lockfile. Cargo still honours one when it is there.
 COPY Cargo.toml Cargo.lock* ./
+# The font kit rides into the build: src/fonts.rs include_bytes!'s these.
+# Before `src` in layer order — faces change rarely, source constantly.
+COPY fonts ./fonts
 COPY src ./src
 RUN cargo build --release \
     && cp target/release/phosphene /plugin
