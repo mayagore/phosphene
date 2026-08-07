@@ -311,6 +311,11 @@ export async function resume(
       user: "Replay the exploration.",
       // Same probe-backed choice as explore — see the note there.
       upstream: "claude_agent_sdk",
+      // Replay is pure instant reads — no design judgment anywhere in the
+      // run, so the smallest model that can follow the call list wins on
+      // both latency and cost. Verified live: the haiku alias resolves
+      // through the runner and replays 9/9 cells lean.
+      model: "haiku",
       thinking: false,
       plugins: [{ ...PHOSPHENE_PLUGIN }],
       timeoutSeconds: 300,
