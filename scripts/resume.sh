@@ -38,8 +38,23 @@ printf '\nphosphene resume — %s/%s/%s\n\n' "$OWNER" "$NAME" "$VERSION"
 # ── 1. Daemon ───────────────────────────────────────────────────────────
 # Nothing auto-spawns it, and with it down the read commands below return an
 # EMPTY result rather than an error — so check the process, not the output.
+#
+# The daemon's ENV matters as much as the process: runner-spawned claude
+# subprocesses inherit it, and claude's MCP client otherwise kills any tool
+# call that is silent for 60s ("The operation timed out." on every render
+# slower than a minute) and bounces oversized results. Export before spawn;
+# a daemon started without these must be killed and respawned — env cannot
+# be injected into a running process.
+export MCP_TOOL_TIMEOUT="${MCP_TOOL_TIMEOUT:-600000}"
+export CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT="${CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT:-600000}"
+export MAX_MCP_OUTPUT_TOKENS="${MAX_MCP_OUTPUT_TOKENS:-100000}"
 if pgrep -f "objectiveai-daemon daemon spawn" >/dev/null 2>&1; then
   ok "daemon already running"
+  DPID="$(pgrep -f "objectiveai-daemon daemon spawn" | head -1)"
+  if ! ps eww "$DPID" 2>/dev/null | grep -q "MCP_TOOL_TIMEOUT="; then
+    warn "running daemon LACKS MCP_TOOL_TIMEOUT — renders >60s will time out."
+    say  "  fix:  kill $DPID   # then re-run this script (it exports + respawns)"
+  fi
 elif $CHECK_ONLY; then
   warn "daemon is NOT running"
 else

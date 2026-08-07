@@ -2,6 +2,25 @@
 
 **Paused:** 2026-08-01. Pick up from here in a new session.
 
+## ⚠️ LEAN TRANSIT (2026-08-07) — the board-payload contract
+
+Boards never ride a model's context at full weight. `render_state`,
+`refine_state` and `get_state` return the stored document with font payloads
+ELIDED (`base64,ELIDED` stubs) plus `bytes_stored` / `fonts_embedded` /
+`svg_used`; the full document lives only in plugin postgres. The VIEWER owns
+the payloads — `viewer/src/lib/fontkit.generated.ts`, generated from
+`mcp/src/fonts.rs` + `mcp/fonts/` by `viewer/scripts/gen-fontkit.mjs`, kept
+honest by contract check 6 — and re-attaches them at display and export time
+(`attachKit`). If you touch the kit, regenerate and commit; if you add a tool
+that returns a board, return `lean_rendered(...)`, never raw html.
+
+Operational sibling: `scripts/resume.sh` now exports `MCP_TOOL_TIMEOUT`,
+`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` and `MAX_MCP_OUTPUT_TOKENS` before
+spawning the daemon — claude's MCP client otherwise kills any tool call
+silent for 60s, which presents as "The operation timed out." on every render
+and orphans the nested completion. A daemon started WITHOUT these must be
+killed and respawned through the script.
+
 **Read in this order:** the ⚠️ ARCHITECTURE CHANGED section below (it supersedes
 decision §6.3), then `docs/why-rebuild.md` (the brief, in Maya's words), then
 whichever `docs/platform/*` artifact covers what you are about to touch.

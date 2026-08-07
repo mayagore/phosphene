@@ -13,9 +13,10 @@
  * would defeat a shallow memo — and an unmemoized iframe re-parses its
  * srcDoc on every tick, which is the most expensive thing on the page.
  */
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Direction, Invention } from "../lib/directions";
 import { ARTBOARD_HEIGHT, ARTBOARD_WIDTH, cellKey, type CellStatus } from "../lib/board";
+import { attachKit } from "../lib/fontkit";
 import { DIMENSIONS, scoreTone, type Dimension, type DirectionRank } from "../lib/scores";
 import { computeBoard, type BoardShape } from "../lib/layoutGrid";
 import { copyPng, rasterizeBoard, savePng } from "../lib/rasterize";
@@ -74,12 +75,14 @@ function ArtboardImpl({
   onOpen: () => void;
 }) {
   if (status?.phase === "done") {
+    // Recomputed only when the memo admits a re-render (html changed) — an
+    // unstable srcDoc string would re-parse the iframe on every tick.
     return (
       <>
         <iframe
           className="ph-frame"
           sandbox=""
-          srcDoc={status.html}
+          srcDoc={attachKit(status.html)}
           title={`${directionName} — ${label}`}
           width={ARTBOARD_WIDTH}
           height={ARTBOARD_HEIGHT}
@@ -133,6 +136,10 @@ function ZoomModal({ zoomed, onClose }: { zoomed: Zoomed; onClose: () => void })
   const [showSource, setShowSource] = useState(false);
   const [copied, setCopied] = useState(false);
   const [exportState, setExportState] = useState<ExportState>("idle");
+  // Kit re-attached once per board — the modal re-renders on its own state
+  // toggles and the iframe must not re-parse for those. The source view and
+  // copy-html stay LEAN on purpose: readable markup, no 30 KB of base64.
+  const fonted = useMemo(() => attachKit(zoomed.html), [zoomed.html]);
   useEffect(() => {
     setShowSource(false);
     setCopied(false);
@@ -149,7 +156,7 @@ function ZoomModal({ zoomed, onClose }: { zoomed: Zoomed; onClose: () => void })
   const exportPng = async (how: "save" | "copy") => {
     setExportState("working");
     try {
-      const blob = await rasterizeBoard(zoomed.html);
+      const blob = await rasterizeBoard(fonted);
       if (how === "copy") {
         await copyPng(blob);
         setExportState("copied");
@@ -207,7 +214,7 @@ function ZoomModal({ zoomed, onClose }: { zoomed: Zoomed; onClose: () => void })
           <iframe
             className="ph-zoom-frame"
             sandbox=""
-            srcDoc={zoomed.html}
+            srcDoc={fonted}
             title={`${zoomed.direction.name} — ${zoomed.label}`}
             width={ARTBOARD_WIDTH}
             height={ARTBOARD_HEIGHT}

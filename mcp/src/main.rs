@@ -357,8 +357,29 @@ pub struct RefineArgs {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Rendered {
     pub label: String,
-    /// A complete, self-contained XHTML document, 400×720.
+    /// The stored document with font payloads ELIDED (`base64,ELIDED` stubs) —
+    /// full bytes live only in the database and never ride an agent's context
+    /// (the lean-transit rule). Viewers re-attach the kit at display time.
     pub html: String,
+    /// Size of the FULL stored document, payloads included.
+    pub bytes_stored: u64,
+    /// Kit families whose embedded payload is in the stored document.
+    pub fonts_embedded: Vec<String>,
+    /// Inline `<svg>` elements in this document — drawn matter, measured.
+    pub svg_used: u32,
+}
+
+/// The lean transit form of a stored document: payloads elided, real size and
+/// materials reported. Every tool that hands a board to an agent returns THIS —
+/// the full bytes stay in the database.
+fn lean_rendered(label: &str, stored: &str) -> Rendered {
+    Rendered {
+        label: label.to_string(),
+        bytes_stored: stored.len() as u64,
+        fonts_embedded: fonts::embedded_families(stored),
+        svg_used: stored.to_lowercase().matches("<svg").count() as u32,
+        html: fonts::elide_font_payloads(stored),
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1170,6 +1191,28 @@ fn compute_facts(direction: &Direction, artboards: &[(String, String)]) -> Facts
 }
 
 #[cfg(test)]
+mod lean_rendered_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn lean_result_reports_the_stored_document() {
+        let html = "<html xmlns=\"x\"><head><style>b{}</style></head>\
+                    <body><svg viewBox=\"0 0 8 8\"><circle r=\"4\"/></svg>\
+                    <svg viewBox=\"0 0 4 4\"/></body></html>";
+        let stored = fonts::inject(html, &["Space Mono".to_string()]).await;
+        let lean = lean_rendered("night map", &stored);
+        assert_eq!(lean.label, "night map");
+        assert_eq!(lean.bytes_stored, stored.len() as u64);
+        assert_eq!(lean.fonts_embedded, vec!["Space Mono"]);
+        assert_eq!(lean.svg_used, 2);
+        // The transit form carries the stub, never a payload.
+        assert!(lean.html.contains("base64,ELIDED"));
+        assert!(fonts::embedded_families(&lean.html).is_empty());
+        assert!((lean.html.len() as u64) < lean.bytes_stored / 2);
+    }
+}
+
+#[cfg(test)]
 mod facts_tests {
     use super::*;
 
@@ -1549,13 +1592,16 @@ impl Plugin {
     #[rmcp::tool(
         description = "Render ONE state of ONE design direction as a complete, \
                        self-contained 400x720 XHTML document — no external resources, \
-                       no JavaScript. Render a direction's FIRST state first; when \
-                       you then render its remaining states, the tool automatically \
-                       reuses that first document from its own cache to pin the \
-                       shared chrome (nav, spacing scale, component styling), so the \
-                       states read as one product. You never pass HTML between calls. \
-                       Different directions are independent — order within a \
-                       direction, anchor first, is all that matters."
+                       no JavaScript. The full document is STORED server-side; the \
+                       result echoes it with font payloads elided plus what was \
+                       delivered (bytes_stored, fonts_embedded, svg_used). Render a \
+                       direction's FIRST state first; when you then render its \
+                       remaining states, the tool automatically reuses that first \
+                       document from its own cache to pin the shared chrome (nav, \
+                       spacing scale, component styling), so the states read as one \
+                       product. You never pass HTML between calls. Different \
+                       directions are independent — order within a direction, anchor \
+                       first, is all that matters."
     )]
     async fn render_state(
         &self,
@@ -1671,10 +1717,7 @@ impl Plugin {
         .await
         .map_err(|e| internal(error_chain("store the artboard", &e)))?;
 
-        Ok(Json(Rendered {
-            label: label.to_string(),
-            html,
-        }))
+        Ok(Json(lean_rendered(label, &html)))
     }
 
     #[rmcp::tool(
@@ -1710,7 +1753,9 @@ impl Plugin {
                        storage — no generation, instant. Used to replay a stored \
                        exploration into a fresh display: call it once per \
                        (direction_index, label) and the documents stream back \
-                       exactly as render_state's results do."
+                       exactly as render_state's results do — font payloads elided, \
+                       with bytes_stored/fonts_embedded/svg_used reporting what is \
+                       actually stored."
     )]
     async fn get_state(
         &self,
@@ -1729,7 +1774,7 @@ impl Plugin {
         .await
         .map_err(|e| internal(error_chain("read the artboard", &e)))?;
         match html {
-            Some(html) => Ok(Json(Rendered { label: label.to_string(), html })),
+            Some(html) => Ok(Json(lean_rendered(label, &html))),
             None => Err(internal(format!(
                 "no stored artboard for direction {} state \"{label}\" in \
                  exploration {}",
@@ -1832,10 +1877,7 @@ impl Plugin {
         .await
         .map_err(|e| internal(error_chain("store the revision", &e)))?;
 
-        Ok(Json(Rendered {
-            label: label.to_string(),
-            html,
-        }))
+        Ok(Json(lean_rendered(label, &html)))
     }
 
     #[rmcp::tool(

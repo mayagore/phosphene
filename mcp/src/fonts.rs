@@ -224,6 +224,27 @@ pub async fn inject(html: &str, families: &[String]) -> String {
     format!("<style>\n{css}</style>{html}")
 }
 
+/// Kit families whose `@font-face` payload is present in a document — read
+/// from the document alone, so callers without the direction (get_state) get
+/// the same answer as callers with it.
+pub fn embedded_families(html: &str) -> Vec<String> {
+    // A real payload, not the `ELIDED` stub a lean document carries.
+    let has_payload = html
+        .split("data:font/woff2;base64,")
+        .skip(1)
+        .any(|after| !after.starts_with("ELIDED"));
+    if !has_payload {
+        return Vec::new();
+    }
+    let lower = html.to_lowercase();
+    KIT.iter()
+        .filter(|face| {
+            lower.contains(&format!("font-family:'{}';font-style", face.family).to_lowercase())
+        })
+        .map(|face| face.family.to_string())
+        .collect()
+}
+
 /// Replace embedded font payloads with a stub so prompts and judges never
 /// carry base64 — the `@font-face` declaration (and its family name) stays
 /// visible, which is exactly what a reader needs to know.
@@ -281,6 +302,16 @@ mod tests {
         assert!(lean.contains("base64,ELIDED) format('woff2')"));
         assert!(lean.len() < injected.len() / 2);
         assert!(lean.contains("font-family:'Oswald';")); // the name survives
+    }
+
+    #[tokio::test]
+    async fn embedded_families_reads_payloads_not_stubs() {
+        let html = "<html xmlns=\"x\"><head><style>b{}</style></head><body/></html>";
+        assert!(embedded_families(html).is_empty());
+        let injected = inject(html, &["Oswald".to_string(), "Space Mono".to_string()]).await;
+        assert_eq!(embedded_families(&injected), vec!["Oswald", "Space Mono"]);
+        // The lean form declares the families but carries no payload.
+        assert!(embedded_families(&elide_font_payloads(&injected)).is_empty());
     }
 
     #[tokio::test]

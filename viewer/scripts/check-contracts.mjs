@@ -18,9 +18,11 @@
  *      `typeof component !== "function" -> return`. This is exactly the bug
  *      that made every ObjectiveAI ≤2.2.14 viewer unable to render any plugin.
  */
+import { createHash } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseKit } from "./gen-fontkit.mjs";
 
 // Resolved from THIS FILE, not the cwd. The scaffold layout puts the one
 // manifest at the repo root and the viewer half in `viewer/`, so the two live
@@ -175,6 +177,46 @@ for (const [, path] of declared.filter(([k]) => k === "tab style")) {
     );
   }
   notes.push(`${path}: ${used.size} var() refs, all defined; no unknown at-rules`);
+}
+
+// ── 6. The viewer's font kit IS the MCP kit ──────────────────────────────
+// Boards travel lean (payloads elided) and the viewer re-attaches the kit at
+// display time. A stale copy fails SILENTLY: the family name matches, the
+// bytes differ — or a new face never reaches the viewer and its boards
+// render in fallback type forever. Compare the generated module against the
+// source of truth (mcp/src/fonts.rs + mcp/fonts/*.woff2) by name, weight
+// and hash.
+{
+  const FONTS_RS = join(ROOT, "mcp", "src", "fonts.rs");
+  const FONTS_DIR = join(ROOT, "mcp", "fonts");
+  const GENERATED = join(VIEWER, "src", "lib", "fontkit.generated.ts");
+  if (!existsSync(GENERATED)) {
+    failures.push("src/lib/fontkit.generated.ts missing — run scripts/gen-fontkit.mjs");
+  } else {
+    const wanted = [];
+    for (const face of parseKit(readFileSync(FONTS_RS, "utf8"))) {
+      for (const { weight, file } of face.weights) {
+        const bytes = readFileSync(join(FONTS_DIR, file));
+        wanted.push(
+          `${face.family}/${weight}/${createHash("sha256").update(bytes).digest("hex")}`,
+        );
+      }
+    }
+    const generated = readFileSync(GENERATED, "utf8");
+    const have = [...generated.matchAll(
+      /family:\s*"([^"]+)",\s*weight:\s*(\d+),\s*file:\s*"[^"]+",\s*sha256:\s*"([0-9a-f]{64})"/g,
+    )].map((m) => `${m[1]}/${m[2]}/${m[3]}`);
+    const missing = wanted.filter((w) => !have.includes(w));
+    const extra = have.filter((h) => !wanted.includes(h));
+    if (missing.length || extra.length) {
+      failures.push(
+        `fontkit.generated.ts is STALE (missing ${missing.length}, extra ${extra.length} ` +
+          `face-weight(s)) — run scripts/gen-fontkit.mjs and commit the result`,
+      );
+    } else {
+      notes.push(`font kit: ${have.length} face-weight(s) match mcp/fonts by name, weight, hash`);
+    }
+  }
 }
 
 for (const n of notes) console.log(`  ok  ${n}`);
