@@ -1,6 +1,10 @@
 # Phosphene rebuild — handoff
 
-**Paused:** 2026-08-01. Pick up from here in a new session.
+**Status: building, 2026-08-07.** The plugin is done and running — both halves,
+end to end. What is live now is the **expressiveness plan (E1–E4)**, and E1 is
+waiting on Maya's A/B verdict. Skip to [Next action](#next-action) for the
+current list; everything between here and there is settled history, kept because
+it is expensive to rediscover.
 
 ## ⚠️ LEAN TRANSIT (2026-08-07) — the board-payload contract
 
@@ -30,7 +34,7 @@ whichever `docs/platform/*` artifact covers what you are about to touch.
 ```bash
 cd ~/Programming/phosphene
 bash scripts/resume.sh                  # daemon → laboratory → BOTH registrations → viewer
-cd viewer && pnpm install && pnpm run verify   # typecheck + build + 5 contract assertions
+cd viewer && pnpm install && pnpm run verify   # typecheck + build + 6 contract assertions
 cd ../mcp && cargo test                        # the tool half
 ```
 
@@ -82,7 +86,9 @@ broadly right, but §6.3 is now superseded — see below.
 | Phase 1 — calibration spikes A–E | **Done** → `docs/spikes/01-calibration.md` |
 | Phase 2 — decisions (§6) | **Done** — see below |
 | Phase 3 — standards + CI (§7) | **Done** — `pnpm run verify`, `.github/workflows/ci.yml`, CI green |
-| Phase 4 — build (§8) | **Paused** — scaffold boots; architecture changed, see the warning above |
+| Phase 4 — build (§8) | **Done 2026-08-04** — two-halves plugin, five MCP tools, postgres on |
+| Phase 5 — the UI (chat concept → canvas) | **Done 2026-08-05** — `50ef1b7`…`0c143bc` |
+| Phase 6 — expressiveness (E1–E4) | **E1 shipped, awaiting Maya's A/B verdict** — see Next action |
 
 ## The §6 decisions, as made
 
@@ -148,8 +154,12 @@ scoring has to move somewhere a key is legitimate: a plugin container.
 - **§6.1 narrows**: the viewer half is a display surface, not the app.
 - **The review is not built on functions.** Scoring is reconstructed as N agent
   completions, orchestrated by a script agent — see the verified answer below.
-- **§6.3 STANDS. Viewer-only is still correct.** An intermediate conclusion that
-  the MCP half was now required was **wrong and has been retracted** — see below.
+- ~~**§6.3 STANDS. Viewer-only is still correct.** An intermediate conclusion that
+  the MCP half was now required was **wrong and has been retracted** — see below.~~
+  **REVERSED AGAIN 2026-08-02, and that reversal is the one that held.** Both
+  halves ship. Not because scoring needs the MCP half — the reasoning below is
+  still sound — but because `scaffold.sh` has no viewer-only mode and a plugin
+  exposing zero tools hard-fails (`plugin_image.rs:283-287`). See §6 decision 3.
 
 ### VERIFIED 2026-08-01 — how scoring works without functions
 
@@ -179,7 +189,7 @@ Evidence, each checked against source:
 | **viewer half** | one `agents spawn` of an orchestrator, then `agents logs subscribe` and render. Pure display. Fits the single-in-flight invoke limit. |
 | **script agent** | fans out N judges via `objectiveai.execute(argvs)`, verified parallel by design (`objectiveai-rustpython-wasm/src/main.rs:70-76`). Python, no model, no token cost. |
 | **each judge** | `agents spawn --agent-inline`, one model each. Votes combined with `objectiveai_sdk::Weights` (ungated, available). |
-| **MCP half** | **not needed for scoring.** Build it only when phosphene's judgment must be callable *by other agents* as a tool — the fan-out logic ports unchanged. |
+| **MCP half** | **not needed for scoring** — still true. It was built anyway (2026-08-02, forced by the scaffold), and it now holds the tools, the font kit and the postgres store. |
 
 **The cost: no logprobs.** `top_logprobs` is ignored for agent completions, so
 this is discrete voting, not calibrated preference distribution. A real
@@ -201,11 +211,13 @@ daemon entirely. That is precisely the hole "do all work through the daemon /
 that will make it safe" is aimed at, and the conduit
 (`websocket_laboratory.rs:539-554`) has **no command allowlist or denylist**.
 
-Unlike the functions defect, this one is worth telling Ronald about.
+Unlike the functions defect, this one is worth telling Ronald about — but
+**Maya said "dont send anything" when it was found, and that still stands.**
+It is written up and held with the other six. See Next action §4.
 
 ### What survives — nearly everything
 
-The scaffold, `build.mjs`, CI, the five contract assertions, the design tokens,
+The scaffold, `build.mjs`, CI, the contract assertions, the design tokens,
 all nine research docs, and the verified boot path do not care who orchestrates.
 The tab is a display either way.
 
@@ -241,27 +253,53 @@ Two consequences, and the second is the useful one:
    against that seat and retry or degrade with the panel size recorded. This is
    strictly better than the feared silent average over a hole.
 
-### READ PATH — most instruments lie, use `logs open --id`
+### ~~READ PATH — most instruments lie~~ — WRONG. Retracted 2026-08-07.
 
-Costly to rediscover, so: **`agents instances get` reports `logged: 0` for runs
-that demonstrably executed**, and `agents logs list --target …` returns zero rows
-in every target form tried (`me`, `instance=L,parent=P`), including against an
-instance whose own aggregate claims `logged: 9`.
+**The instruments do not lie. We were holding one of them wrong**, and every
+"defect" below followed from that single mistake. Reproduced live at 2.2.15.
 
-The path that works is `agents logs open --id N` over the global BIGSERIAL log.
-Everything above was read that way.
+**The root cause: passing the JOINED hierarchy as `instance=`.** A spawn prints
+a path (`daemon/<leaf>`). Passing `--target "instance=daemon/<leaf>"` resolves to
+`cli/daemon/<leaf>` — an AIH that never ran — and the daemon **zero-fills** it.
+Pass the leaf alone: `--target "instance=$LEAF,parent=daemon"`.
 
-Three traps in that reader:
+The retracted claims, each corrected:
 
-- **Not-found and real errors both come back as `type: "error"`.** A not-found row
-  has `error: null`; a genuine failure has a populated `error`. A head-search that
-  treats any error as "end of log" stops at the first *real* error row and hides
-  everything after it.
-- **Latency is minutes, not seconds.** A spawn at 00:25 produced its judge
-  completions at 00:29:42. Poll the log tier; do not assume promptness.
-- **`agents wait --inactive` will consume its entire timeout budget.** It returns
-  `"Ok"` for agents that never ran. Never pace a batch with it — a loop of
-  spawn-then-wait dies on its own timeout and the queued spawns are lost.
+- ~~`agents instances get` reports `logged: 0` for runs that executed.~~ It
+  agrees with `instances list` when the target is correct. `logged: 0` was the
+  zero-fill. Source: `objectiveai-daemon/src/command/agents/instances/get.rs:1-4`
+  — *"always yields an item, zero-filled when it has no activity."*
+- ~~`agents logs list` returns zero rows in every target form.~~ It works:
+  `--target "instance=$LEAF,parent=daemon" --all`. Zero rows come from omitting
+  the required `--all`/`--pending`, from `--pending` on a finished run, or from
+  `--target me` (the CLI is not an agent). Source: `.../logs/list.rs:21-23`.
+- ~~The path that works is bisecting `logs open --id`.~~ Not needed. Read the run
+  with `logs list … --all`, then `logs open --id N` for part content.
+- ~~A not-found row has `error: null`.~~ It has **no `error` key at all**
+  (exit 1) — the schema's `Error` variant requires `error`. Real failures have it
+  populated. That absence is the reliable discriminator.
+- ~~`agents wait --inactive` consumes its entire timeout budget.~~ It returns
+  `"Ok"` in **0s**. `--active` is the one that burns the timeout and exits 1.
+- **`parent=` is ABSOLUTE**, not caller-relative. The CLI substitutes its own
+  hierarchy only when `parent` is *omitted*.
+
+**Latency is lane-dependent, not a contract.** A 2026-08-02 openrouter judge
+panel took ~4 minutes; a haiku probe on 2026-08-08 logged its rows in 1 second.
+Measure it; do not assume either way. (The earlier "minutes, not seconds" was
+one lane generalized into a rule.)
+
+**The intended model, from Ronald 2026-08-07:** spawn and message RETURN the
+AIH; you keep that handle and use it for `logs subscribe` / `list`. There is no
+"find the orphan" query because you are not meant to lose the handle.
+
+Invariant worth keeping: `instances get .logged` == Σ(`parts` over
+`logs list --all`) + 1. The +1 is the `agent_completion_request` blob, which
+`logs list` never emits and only `logs open --id` can read.
+
+**The lesson is bigger than the commands.** This section sat here for days
+asserting the platform was broken, and it was read as settled fact because it was
+written down. Prefer source — it is readable, see below — over any claim in this
+file, including this one.
 
 ### Why functions are going away — the bigger picture
 
@@ -383,11 +421,26 @@ deviation needs a written reason.**
 
 ## Read this before touching anything
 
-**Every local ObjectiveAI checkout on this machine is stale and will mislead
+~~**Every local ObjectiveAI checkout on this machine is stale and will mislead
 you.** `~/Desktop/work/objectiveai` and `~/Programming/objectiveai` are at
-2026-06-12; `~/oai_research/objectiveai` at 2026-06-22. The plugin system was
-rebuilt 2026-07-28 and the scaffolder shipped 2026-07-30. All three carry a
-top-level `PLUGINS.md` that no longer exists upstream. **Read HEAD, always.**
+2026-06-12; `~/oai_research/objectiveai` at 2026-06-22.~~
+
+**CORRECTED 2026-08-08: `~/Programming/objectiveai` is now at
+`objectiveai-sdk-go/v2.2.15`, version-exact with the installed CLI — it is
+readable and it is the fastest way to check platform behavior.** Confirm before
+trusting it:
+
+```bash
+objectiveai --version && git -C ~/Programming/objectiveai describe --tags
+```
+
+The other two checkouts are still stale and still carry a top-level `PLUGINS.md`
+that no longer exists upstream. The plugin system was rebuilt 2026-07-28 and the
+scaffolder shipped 2026-07-30. **When the local checkout does not match the
+installed CLI, read HEAD.** Prefer reading source (or `<leaf> request-schema`,
+which carries the Rust doc comments) over believing any written claim in this
+file — several recorded "the instrument is broken" findings turned out to be
+usage errors.
 
 Working checkout used for Pass 1 (blobless sparse clone, scratchpad — recreate it
 rather than trusting it to persist):
@@ -455,42 +508,84 @@ that copy conditional is a phosphene build decision, not an upstream one.
 
 ## Next action
 
-**Phases 0–3 are done** — four platform passes, the boot check, the calibration
-spikes, §6's five decisions, and §7's standards + CI. **Phase 4, the build, is
-where this is paused.**
+**Phases 0–5 are done.** Four platform passes, the boot check, the calibration
+spikes, §6's decisions, §7's standards + CI, the two-halves build, and the UI.
+The plugin runs end to end: viewer tab → one orchestrating agent → five MCP
+tools → plugin postgres → boards on a pannable canvas that export.
 
-The architecture it must be built against is the one in the ⚠️ section above —
-phosphene as a display onto an orchestrating agent, scoring as N agent
-completions fanned out by a script agent. That mechanism is now verified end to
-end (see "SETTLED 2026-08-02"), so the first build task is the panel itself:
-fan out judges, read the log tier, and handle a failed seat explicitly.
+What follows is not the build. It is the product problem the build exposed.
 
-**Inference is verified end to end (2026-08-01).** An OpenRouter key is now
-configured, and a real agent completion ran from inside a plugin tab through
-`Client.viewer(transport)` — 5 chunks in 930 ms, answer `"pong"`, persisted and
-read back. An **OpenRouter key alone is sufficient**; no ObjectiveAI `apk_` key
-was needed. See `docs/spikes/01-calibration.md` §A.
+### 1. WAITING ON MAYA — the E1 A/B verdict. It gates everything in §2.
 
-**Remaining:** a full *function execution* (`functionsExecuteStandard…` /
-`…SwissSystem…`) has not been run, because it needs a published function and
-swarm — that is §6 work, not calibration. Everything underneath it (transport,
-streaming, identity, persistence, concurrency) is verified.
+Maya's diagnosis, 2026-08-06, in her own written doc: **the outputs are
+formulaic.** Five causes — the expressive box (prompt-prose bans and no real
+typefaces; "self-contained" was the safety property, "font-less" never was),
+generator monoculture (one hardcoded seat), a conformity-shaped rubric, no
+visual references, and a taste loop that was never run. The approved fix is
+four phases, **each gated on a same-brief A/B judged by Maya's eye.**
 
-Carried into the build (these were §6's inputs; the decisions themselves are
-recorded under "The §6 decisions, as made" above):
+**E1 (unbox) shipped** — `8d878bd`, `0030c11`, `2b98879`: a woff2 kit inside the
+MCP image, server-side `@font-face` injection, SVG invited, the "contemporary
+baseline" paragraph deleted, `fonts_embedded` / `svg_used` surfaced as facts.
+The A/B rendered 9/9 and went to Maya 2026-08-07 — new `307daa12-…` against old
+`22711796-…`, same night-market-haiku brief, ~86–125KB boards against ~7–11KB.
 
-- **Viewer-only stands.** `scaffold.sh` emits both halves, so the viewer-only
-  layout is a hand-copy — that is the written reason. Spike D removed the last
-  argument for an MCP half: in-page rasterization works, so phosphene does not
-  need one merely to see its own output. Track issue [#287](https://github.com/ObjectiveAI/objectiveai/issues/287) (a JS MCP scaffold)
-  before ever committing to Rust.
-- **Toolchain: the scaffold's esbuild.** Vite strips entry exports (the bug we
-  fixed upstream in v2.2.15); a Vite-built plugin hits it silently in its own
-  repo. Also: make the stylesheet copy conditional, or every `.tsx` save costs a
-  full webview reload.
-- **Legacy reuse: prompts, rubric, design tokens. Not the code.**
+**Nothing in §2 starts until she rules.** Re-render or re-send runbook: the
+`expressiveness` memory, which also holds the two ops traps that cost a full run
+(the dev image does NOT rebuild on source change — `podman rmi` first; and a
+daemon started outside `scripts/resume.sh` lacks the MCP timeout env).
 
-Standing constraints from the spikes, for whatever §6 decides:
-ship our own stylesheet and consume only `@theme` tokens, never inherited
-Tailwind utilities; namespace all storage and prefer indexedDB on the shared
-`tauri://localhost` origin; never pace long work with timers.
+### 2. Then E2 → E4, in order
+
+- **E2 — many hands.** A model seat per direction, replacing the one hardcoded
+  `GENERATION_UPSTREAM`/`MODEL` in `mcp/src/main.rs`. `run_agent` already takes
+  model and upstream per call, so this is roster work, not plumbing. **Maya
+  picks the roster** and the cost envelope (default $1).
+- **E3 — the funnel.** Restore ideate → judge → draft → judge → explore → judge
+  → human as stage tools with their own rubrics, human gates default OFF. This
+  was in the design and dissolved when functions were retired. It was never
+  consciously cut.
+- **E4 — references.** Text and SVG first, rasters after. Carries a reserved
+  decision: judges read ~30KB of *markup*, not pixels, so vision-judging either
+  becomes real pixels or the word goes.
+
+**The standing rule from this plan: variety must be bred, not prompted.** Never
+re-add material bans to the prompts, and never ship an expressiveness change
+without an A/B on an unchanged brief.
+
+### 3. Open, unblocked, nobody is waiting on them
+
+- **`list_explorations` tool.** The viewer resumes an id but cannot list ids, so
+  every past exploration is unreachable unless you kept the uuid.
+- **Per-round artboard rows.** Renders currently overwrite. One row per round is
+  what unlocks undo and diffs.
+- **No tests exist** — not in `viewer/`, not in `mcp/`. `pnpm run verify` is
+  typecheck + build + six contract assertions; `cargo test` covers the tool half.
+  Tests for the salvage ladder and a contract test against a live daemon were
+  named P2 in `docs/reviews/01-intention.md` and are still open.
+- **CI does not build the MCP half.** `.github/workflows/ci.yml` has `verify`
+  and `release-build`; `mcp/` breaks are found by hand.
+- **Cost is never shown in the viewer.** The person paying cannot see the spend.
+- **Never tagged.** No git tag exists. The frozen-tag rule applies at `v0.1.0` —
+  tag deliberately.
+
+### 4. Owed to other people
+
+- 🔴 **OpenRouter key rotation is STILL unconfirmed.** The key behind every judge
+  in this repo's history. Treat as live until proven otherwise.
+- **Seven platform findings for Ronald are written up and HELD** — full list in
+  the `platform-findings` memory. **Maya has not said send. Do not send them.**
+  She said "dont send anything" about the security one specifically (a plugin can
+  read the user's API key via `objectiveai api config objectiveai-authorization`
+  and bypass the daemon; the command lane has no allowlist).
+- **The {ai} logo on the viewer app itself** is an upstream contribution, not
+  ours — the viewer ships no app bundle and its CFBundleIdentifier is NULL.
+
+### Standing constraints — from the spikes, still binding
+
+Ship our own stylesheet and consume only `@theme` tokens, never inherited
+Tailwind utilities. Namespace all storage and prefer indexedDB on the shared
+`tauri://localhost` origin. Never pace long work with timers. Keep the toolchain
+on the scaffold's esbuild — Vite strips entry exports, which is the bug we fixed
+upstream in v2.2.15, and a Vite-built plugin hits it silently in its own repo.
+Legacy reuse remains prompts, rubric and design tokens — not the code.
