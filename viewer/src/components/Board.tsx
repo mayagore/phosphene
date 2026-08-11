@@ -276,6 +276,10 @@ export default function Board({
         key: `col-${col.directionIndex}`,
         x: col.x,
         y: col.y,
+        // Drawn UPWARD from the grid's top edge, so the head's own height —
+        // which changes when the meta row appears with judgment — can never
+        // desync from a reserved constant and be painted over by the boards.
+        translate: "translate(0, -100%)",
         interactive: true,
         node: (
           <button

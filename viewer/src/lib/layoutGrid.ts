@@ -64,7 +64,16 @@ export interface BoardLayout {
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
 }
 
-const COL_HEAD_H = 64;
+/** Framing allowance ONLY — how much room zoomToFit leaves above the grid for
+ * the column heads. It is deliberately NOT what positions them: the head is
+ * anchored to the grid's top edge and drawn upwards with
+ * `translate(0, -100%)`, so its real height cannot desync from a constant
+ * here. It used to: this was 64 while the head rendered 109 (48 name + 8 gap
+ * + 40 meta + 10 padding + 3 border), so every artboard painted over the
+ * bottom 45px of its own header — and because the meta row is EMPTY until
+ * judgment lands, the head was only 69px during a run and jumped the moment
+ * scores arrived. That is what read as things overlapping at random. */
+const COL_HEAD_FRAME = 130;
 const ROW_HEAD_W = 200;
 
 /**
@@ -83,7 +92,8 @@ export function computeBoard(
 
   directionOrder.forEach((directionIndex, pos) => {
     const x = c.originX + pos * (c.cellWidth + c.gapX);
-    cols.push({ directionIndex, x, y: c.originY - COL_HEAD_H, width: c.cellWidth });
+    // Anchored to the grid's top edge; Board draws it upward from here.
+    cols.push({ directionIndex, x, y: c.originY, width: c.cellWidth });
     states.forEach((label, row) => {
       shapes.push({
         id: cellKey(directionIndex, label),
@@ -109,7 +119,7 @@ export function computeBoard(
   const rowCount = Math.max(states.length, 1);
   const bounds = {
     minX: c.originX - ROW_HEAD_W,
-    minY: c.originY - COL_HEAD_H,
+    minY: c.originY - COL_HEAD_FRAME,
     maxX: c.originX + colCount * c.cellWidth + (colCount - 1) * c.gapX,
     maxY: c.originY + rowCount * c.cellHeight + (rowCount - 1) * c.gapY,
   };

@@ -642,11 +642,17 @@
 
 /* ── Center — the board ───────────────────────────────────────────────── */
 
+/* The panel CLIPS. Without this its header — whose chips are all flex:none
+ * and nowrap, so ~560px is incompressible — overflowed to the right and
+ * painted over the Inspector's text whenever the centre track was narrower
+ * than that. The chips are inline-level, so they landed on top of the
+ * inspector's background but under its text: the two interleaved. */
 .ph-center {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .ph-center-head {
@@ -657,6 +663,8 @@
   gap: var(--ph-spacing-4);
   padding: var(--ph-spacing-4) var(--ph-spacing-5);
   border-bottom: 1px solid var(--ph-color-border-subtle);
+  /* Reflow rather than escape when the track cannot hold the row. */
+  flex-wrap: wrap;
 }
 
 .ph-center-title {
@@ -674,10 +682,15 @@
   white-space: nowrap;
 }
 
+/* Ellipsised like its sibling h2 — the caption's longest word used to run
+ * out from under a min-width:0 parent and sit beneath the dimension chips. */
 .ph-center-title span {
   font-size: var(--ph-text-caption);
   line-height: var(--ph-text-caption--line-height);
   color: var(--ph-color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ph-dim-chips {
@@ -789,11 +802,24 @@
   position: absolute;
   pointer-events: none;
   white-space: nowrap;
+  /* Same easing as .ph-shape. Without it the boards glided to their new
+   * columns on a rank change while the headers snapped, so for 240ms every
+   * header sat over the wrong column. */
+  transition:
+    left 240ms ease,
+    top 240ms ease;
 }
 
 .ph-canvas-node--interactive { pointer-events: auto; }
 
-/* Column header — canvas-unit type: click = select the direction. */
+/* Column header — canvas-unit type: click = select the direction.
+ *
+ * `overflow: hidden` and the stretched, ellipsised name are load-bearing.
+ * `.ph-canvas-node` sets `white-space: nowrap`, which this inherits, so a
+ * flex child sized fit-content resolves to the FULL unbroken string — at
+ * 40px type a name past ~20 characters grew wider than the 400px column,
+ * printed over the next direction's header, and (because the node is
+ * pointer-events:auto) stole its clicks too. */
 .ph-col-head {
   font: inherit;
   display: flex;
@@ -806,6 +832,8 @@
   border-bottom: 3px solid var(--ph-color-border-strong);
   padding: 0 0 10px 0;
   cursor: pointer;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .ph-col-head--selected { border-bottom-color: var(--ph-color-accent-default); }
@@ -814,6 +842,10 @@
 .ph-col-head .ph-board-col-name {
   font-size: 40px;
   line-height: 48px;
+  align-self: stretch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ph-col-head .ph-board-col-rank { font-size: 26px; line-height: 32px; }
@@ -1318,7 +1350,10 @@
 .ph-zoom {
   position: fixed;
   inset: 0;
-  z-index: 10;
+  /* Above .ph-history-list (20). Both resolve in the ROOT stacking context —
+   * nothing in the tree isolates them — so the history popover, which has no
+   * outside-click close, used to float on top of the full-screen zoom scrim. */
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;

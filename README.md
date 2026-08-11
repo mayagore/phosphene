@@ -5,9 +5,49 @@ an agent invents contrasting design directions, renders them across shared
 states, and — when you name judge models — scores them with a multi-model
 panel whose disagreement is shown, never averaged.
 
-A plugin is a set of tools. Phosphene's are `invent_directions`,
-`render_state`, and `score_direction`, served by the MCP half; the viewer half
-is a tab that watches your agent use them.
+A plugin is a set of tools. Phosphene's six are `invent_directions`,
+`render_state`, `refine_state`, `score_direction`, `get_exploration` and
+`get_state`, served by the MCP half; the viewer half is a tab that watches your
+agent use them.
+
+## Using it
+
+An agent reaches the tools by declaring the plugin:
+
+```json
+{ "plugins": [{ "owner": "mayagore", "name": "phosphene", "version": "v0.1.0" }] }
+```
+
+There is no registry and no install step — the laboratory host fetches
+`github.com/mayagore/phosphene` at that tag, builds it, and runs it. To use the
+tab instead, register both halves locally (see Quick start below).
+
+**What a run is.** You type a brief in one composer. The agent invents 3
+contrasting directions, picks 3 states that suit the brief, and renders all 9
+as self-contained 400×720 documents onto a canvas you can pan, zoom and export.
+Name judge models in your brief and each direction is scored on four dimensions
+by each judge separately — the spread between judges is the point, so scores
+are never averaged. Then you can refine: give feedback in plain words and the
+affected cells are revised in place. Expect **10–30 minutes** for a full
+exploration; renders are serial.
+
+**Prerequisites, all of them.** Two are easy to miss and both look like
+phosphene bugs when they bite:
+
+| | |
+|---|---|
+| ObjectiveAI CLI **≥ 2.2.15** | Earlier releases cannot render *any* plugin tab. |
+| podman machine with **≥ 6 GiB** | The default 2 GiB OOM-kills the MCP half's Rust build, and the SIGKILL surfaces as an unrelated MCP 502. |
+| A live local **`claude` login** on the daemon host | Invention and rendering run on `claude_agent_sdk` — free and denser than the metered alternative, but it needs the machine's own Claude Code login. A lapsed login is reported by the platform as the nonsense string `"Claude Code returned an error result: success"`. |
+| **MCP timeout env on the daemon**, exported *before* it starts | `MCP_TOOL_TIMEOUT`, `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`, `MAX_MCP_OUTPUT_TOKENS`. Without them claude's MCP client kills any tool call silent for 60s — which is essentially every render — and orphans the nested completion. `scripts/resume.sh` exports these for you; a daemon started any other way must be killed and respawned through it. This one is a platform limitation a plugin cannot fix from its side. |
+
+Judging costs money — judges run on OpenRouter, one completion per
+(direction × judge). Invention and rendering do not, on the Claude login.
+Phosphene does not meter spend for you yet.
+
+**If a direction comes back without a palette or a type choice, the run fails
+and says so.** Phosphene does not invent design decisions on a model's behalf
+to keep a run alive — you would be looking at colours nobody chose.
 
 ## Quick start
 
@@ -74,7 +114,7 @@ declares `{owner, name, version}` and the laboratory host fetches
 ## The contracts that bite
 
 Failures that are **silent** if you get them wrong. The viewer-half ones are
-asserted by `pnpm run check:contracts` (five assertions, run in CI):
+asserted by `pnpm run check:contracts` (six assertions, run in CI):
 
 1. **React external** — a tab bundle carrying its own React dies on the first
    hook with no useful error.

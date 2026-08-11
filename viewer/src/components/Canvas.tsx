@@ -250,15 +250,10 @@ export default function Canvas({
           transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
         }}
       >
-        {positioned.map((p) => (
-          <div
-            key={p.key}
-            className={`ph-canvas-node${p.interactive ? " ph-canvas-node--interactive" : ""}`}
-            style={{ left: p.x, top: p.y, transform: p.translate }}
-          >
-            {p.node}
-          </div>
-        ))}
+        {/* Shapes FIRST, chrome after. The stage's transform makes it a
+            stacking context, so nothing inside can be raised by z-index alone
+            — paint order is DOM order, and the labels have to come last or a
+            board that grows into them wins. */}
         {layout.shapes.map((shape) => (
           <div
             key={shape.id}
@@ -267,6 +262,15 @@ export default function Canvas({
             style={{ left: shape.x, top: shape.y, width: shape.width, height: shape.height }}
           >
             {renderShape(shape)}
+          </div>
+        ))}
+        {positioned.map((p) => (
+          <div
+            key={p.key}
+            className={`ph-canvas-node${p.interactive ? " ph-canvas-node--interactive" : ""}`}
+            style={{ left: p.x, top: p.y, transform: p.translate }}
+          >
+            {p.node}
           </div>
         ))}
       </div>
