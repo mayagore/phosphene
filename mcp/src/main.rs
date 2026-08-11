@@ -1502,10 +1502,13 @@ mod facts_tests {
 
 // ── The plugin ──────────────────────────────────────────────────────────
 
-/// What `render_state` cached for one direction, for `score_direction` to
-/// read. ~9 KB per artboard cannot ride back through the orchestrating
-/// agent's context — it would have to echo ~27 KB verbatim into tool
-/// arguments, which is expensive and which models get wrong.
+/// The plugin server itself. It holds no artboards — the struct that once
+/// cached them per direction is gone; storage is the daemon's postgres.
+///
+/// The reason artboards are stored rather than passed still stands: ~9 KB per
+/// artboard cannot ride back through the orchestrating agent's context — it
+/// would have to echo ~27 KB verbatim into tool arguments, which is expensive
+/// and which models get wrong.
 /// Every tool receives `&Self`. Phosphene's tools hold NOTHING in-process:
 /// artboards live in the daemon's postgres, because ITERATION outlives the
 /// container. This is the pre-written reversal of the `postgres: false`
@@ -1686,7 +1689,9 @@ impl Plugin {
         description = "Invent 3 genuinely contrasting visual design directions for a \
                        design brief. Each carries a name, a described visual strategy, \
                        a 5-colour palette (background, surface, accent, text, muted), \
-                       a system font stack and a mood. Also picks 3 states \
+                       typeface families drawn from the kit embedded in every \
+                       rendered document, a described type treatment and a mood. \
+                       Also picks 3 states \
                        (views/screens) that suit this particular brief and are SHARED \
                        across all directions, so results can be compared side by side. \
                        Follow with render_state once per (direction x state)."
@@ -1746,7 +1751,7 @@ impl Plugin {
                        delivered (bytes_stored, fonts_embedded, svg_used). Render a \
                        direction's FIRST state first; when you then render its \
                        remaining states, the tool automatically reuses that first \
-                       document from its own cache to pin the shared chrome (nav, \
+                       document from storage to pin the shared chrome (nav, \
                        spacing scale, component styling), so the states read as one \
                        product. You never pass HTML between calls. Different \
                        directions are independent — order within a direction, anchor \
@@ -2032,9 +2037,10 @@ impl Plugin {
                        coherence across states. Returns four separate 0-1 scores \
                        (deliberately no overall), a written why per dimension, and \
                        computed facts (WCAG contrast, palette adherence). The \
-                       direction's states must have been rendered via render_state \
-                       IN THIS RUN — the artboards are cached plugin-side, never \
-                       passed as arguments. `model` is required: you choose the \
+                       direction's states must already have been rendered via \
+                       render_state under this exploration_id — by this run or an \
+                       earlier one; the artboards are stored plugin-side and are \
+                       never passed as arguments. `model` is required: you choose the \
                        jury. Call once per judge with genuinely DIFFERENT models — \
                        the spread between judges is the signal, so never average \
                        their scores and never hide their disagreement."
