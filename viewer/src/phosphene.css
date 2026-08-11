@@ -240,7 +240,6 @@
 
 .ph-theme-toggle {
   font: inherit;
-  margin-left: auto;
   width: 28px;
   height: 28px;
   display: flex;
@@ -268,7 +267,9 @@
   flex: none;
 }
 
-.ph-rail-tools .ph-theme-toggle { margin-left: 0; }
+/* (The toggle's own `margin-left: auto` used to be reset here. Both are gone —
+ * .ph-rail-tools carries the auto margin, and the toggle only ever appears
+ * inside it.) */
 
 .ph-rail-new {
   font: inherit;
@@ -879,6 +880,13 @@
   letter-spacing: 2px;
   text-transform: uppercase;
   color: var(--ph-color-text-muted);
+  /* Kept inside the room layoutGrid reserves for it (ROW_HEAD_LABEL_MAX), so
+   * a long state name cannot reach past layout.bounds and get framed off the
+   * canvas by zoomToFit. */
+  display: inline-block;
+  max-width: 392px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* One cell on the stage. Neutral in both modes — chrome never tints

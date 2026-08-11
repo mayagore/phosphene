@@ -74,7 +74,16 @@ export interface BoardLayout {
  * judgment lands, the head was only 69px during a run and jumped the moment
  * scores arrived. That is what read as things overlapping at random. */
 const COL_HEAD_FRAME = 130;
-const ROW_HEAD_W = 200;
+/** Room reserved to the LEFT of the grid for the row (state) labels, and the
+ * budget `.ph-row-head` is capped to in CSS so the two agree. It was 200 while
+ * the labels rendered at 28px with 2px letter-spacing — a name like
+ * "notifications open" is ~340px and grows leftwards from `originX - 28`, so
+ * it reached well outside these bounds and zoomToFit framed it off the canvas
+ * edge. Same class of bug as COL_HEAD_FRAME: a reserve that did not match
+ * what was drawn. */
+const ROW_HEAD_W = 420;
+/** What the label itself may occupy — the reserve less the 28px stand-off. */
+export const ROW_HEAD_LABEL_MAX = ROW_HEAD_W - 28;
 
 /**
  * @param directionOrder direction indices in DISPLAY order (rank or invention)
