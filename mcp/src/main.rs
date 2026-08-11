@@ -154,6 +154,8 @@ For each direction provide:
 - palette: a JSON ARRAY of exactly 5 hex color strings in this order: background, surface, accent, text, muted — e.g. ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"]. Never an object. Background and text MUST have sufficient contrast for readability. Accent should be distinct from background.
 - families: a JSON ARRAY of 0-2 REAL typeface families from this kit (exact names; they will be embedded in the rendered documents): %FONT_MENU%. Pick faces that ARE the direction's voice — a direction that would sing in one of these should claim it; a direction whose era or culture calls for plain system type should take none.
 - typography: how the type behaves — pairing, scale, contrast, case (e.g. "Fraunces display at poster scale over quiet grotesque body, generous smallcap labels"). If families is empty, name a system stack for headings and body (e.g. "Georgia, serif / system-ui, sans-serif").
+- composition: the layout strategy, named in a word or two — e.g. "editorial-columns", "layered-overlap", "full-bleed", "modular-grid", "diagonal", "collage", "centred-column". THE THREE DIRECTIONS MUST NAME THREE DIFFERENT ONES. Coin a better word if you have one; this is not a menu. Be aware that the default — a single centred vertical stack of header, search row and list — is what every generic app looks like. At most one direction may take it, and only if that restraint IS its argument.
+- composition_note: how THIS direction arranges the screen, concretely. What sits where, what overlaps what, what runs to the edges, what breaks the alignment. E.g. "two ragged text columns with the map bleeding full-width underneath them; headings hang into the left margin like a broadsheet."
 - mood: 2-3 word mood descriptor
 - voice: the copy tone this interface speaks in, with 1-2 example phrases in that voice — real UI copy, not description
 - texture: the direction's material language — CSS surfaces (gradients, grain, layered shadows, border treatments, repeating patterns) AND drawn matter: inline SVG illustration, ornament, patterned grounds, decorative rules. Name what should be DRAWN, not just tinted
@@ -162,7 +164,7 @@ For each direction provide:
 
 Also provide "states": a JSON array of exactly 3 state names (views/screens/compositions) that make sense for this brief — a fintech app might get ["landing", "portfolio", "transactions"]; a concert poster might get ["announce", "lineup", "tickets"]. These are SHARED across all directions: every direction will render exactly these 3 states so they can be compared side by side. Do not default to "hero/dashboard/settings" unless those genuinely fit.
 
-`palette` and `typography` are REQUIRED on every direction and are not filled in for you: a direction missing either is rejected and the whole invention fails, so give all 3 directions a full 5-colour array and a type description rather than leaving one thin.
+`palette`, `typography` and `composition` are REQUIRED on every direction and are not filled in for you: a direction missing any of them is rejected and the whole invention fails, so give all 3 directions a full 5-colour array, a type description and a named layout strategy rather than leaving one thin. Two directions naming the SAME composition is also rejected — contrast in arrangement, not only in colour and type.
 
 Respond with a JSON object: {"directions": [...], "states": ["...", "...", "..."]}."##;
 
@@ -266,6 +268,28 @@ pub struct Direction {
     /// How the type behaves — pairing, scale, contrast; or a system stack
     /// when no kit families are claimed.
     pub typography: String,
+    /// The layout strategy this direction commits to, named in a word or two
+    /// — "editorial-columns", "layered-overlap", "full-bleed", "grid",
+    /// "diagonal", "collage", or something the model has a better word for.
+    ///
+    /// NOT a closed enum on purpose: a fixed list of six would cap the design
+    /// space at six, which is the disease and not the cure. What IS enforced
+    /// is that the three directions in one invention name DIFFERENT ones —
+    /// see `normalize_invention`.
+    ///
+    /// Optional in the TYPE so pre-2026-08-10 stored explorations still parse
+    /// and replay; required in `normalize_direction` for anything newly
+    /// invented. Old boards read as unspecified rather than being backfilled,
+    /// because measuring what a direction happened to do and writing it in as
+    /// what it INTENDED is exactly the fabrication rule we just removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composition: Option<String>,
+    /// How THIS direction does that strategy — the specific arrangement, in
+    /// the same register as `texture` and `motifs`. The named strategy makes
+    /// three directions checkably different; this is what makes any one of
+    /// them worth rendering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composition_note: Option<String>,
     /// Embedded font-kit families (exact kit names, ≤2) — the tool injects
     /// their `@font-face` blocks into every rendered document. Optional so
     /// pre-kit stored explorations still parse.
@@ -1049,11 +1073,30 @@ fn normalize_direction(raw: &serde_json::Value, index: usize) -> Result<Directio
         }
     };
 
+    // Composition is the decision E1 never asked for. Measured across 18 real
+    // boards from two runs: identical compositional vocabulary before and
+    // after the font kit, because nothing in the pipeline ever asked a model
+    // to arrange anything — so it returned its prior, a vertical flex stack,
+    // every time. Required for the same reason the palette is.
+    let composition = match raw.get("composition").and_then(|value| value.as_str()) {
+        Some(c) if !c.trim().is_empty() => c.trim().to_string(),
+        _ => {
+            return Err(format!(
+                "direction {index} (\"{name}\") returned no composition — phosphene \
+                 will not choose the layout on a model's behalf. Expected a named \
+                 layout strategy, e.g. \"editorial-columns\" or \"layered-overlap\"."
+            ))
+        }
+    };
+    let composition_note = opt_field(raw, "composition_note");
+
     Ok(Direction {
         name,
         description: field("description"),
         palette,
         typography,
+        composition: Some(composition),
+        composition_note,
         families: raw
             .get("families")
             .and_then(|value| value.as_array())
@@ -1096,6 +1139,17 @@ fn families_line(direction: &Direction) -> String {
 /// produces exactly as much of it as the direction carries.
 fn moodboard_lines(direction: &Direction) -> String {
     let mut out = String::new();
+    // Composition leads. It is the decision the renderer is most likely to
+    // ignore in favour of its prior, so it is stated first and as an
+    // instruction rather than as flavour.
+    if let Some(c) = &direction.composition {
+        out.push_str(&format!(
+            "\nCOMPOSITION — build the screen this way, not as a centred vertical stack: {c}"
+        ));
+        if let Some(note) = &direction.composition_note {
+            out.push_str(&format!("\nHow this direction arranges it: {note}"));
+        }
+    }
     if let Some(v) = &direction.voice {
         out.push_str(&format!("\nVoice: {v}"));
     }
@@ -1129,6 +1183,31 @@ fn normalize_invention(parsed: &serde_json::Value) -> Result<Invention, String> 
         .unwrap_or_default();
     if directions.is_empty() {
         return Err("the model returned no directions".to_string());
+    }
+
+    // The three must name DIFFERENT layout strategies. This is a weak check —
+    // it compares strings, so "grid" and "grid-based" read as different, and
+    // it cannot see that two elaborations describe the same arrangement. It is
+    // still the only mechanical guard there is, and it catches the actual
+    // failure: a model answering "editorial-columns" three times because the
+    // brief suggested one good layout. Genuine contrast is the prompt's job,
+    // the composition facts measure whether it happened, and the judge reads
+    // both. Do not mistake this for enforcement of difference.
+    let mut named: Vec<String> = Vec::new();
+    for (index, direction) in directions.iter().enumerate() {
+        let Some(composition) = direction.composition.as_deref() else {
+            continue; // pre-2026-08-10 stored explorations replay unchanged
+        };
+        let key = composition.to_lowercase();
+        if named.contains(&key) {
+            return Err(format!(
+                "direction {index} (\"{}\") reuses the composition \"{composition}\" — \
+                 the directions must contrast in LAYOUT, not only in colour and type. \
+                 Give each a different arrangement.",
+                direction.name
+            ));
+        }
+        named.push(key);
     }
 
     let mut seen: Vec<String> = Vec::new();
@@ -1459,14 +1538,25 @@ mod no_fabrication_tests {
             "description": "warm paper, cold ink",
             "palette": ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"],
             "typography": "Fraunces, serif",
+            "composition": "editorial-columns",
+            "composition_note": "two ragged columns, map bleeding underneath",
             "mood": "quiet"
         })
+    }
+
+    /// `good()` with a different layout strategy, for invention-level tests —
+    /// the three directions must contrast in arrangement.
+    fn good_with(composition: &str) -> serde_json::Value {
+        let mut raw = good();
+        raw["composition"] = serde_json::json!(composition);
+        raw
     }
 
     #[test]
     fn a_complete_direction_is_accepted_verbatim() {
         let d = normalize_direction(&good(), 0).expect("complete direction");
         assert_eq!(d.name, "Ink Lantern");
+        assert_eq!(d.composition.as_deref(), Some("editorial-columns"));
         assert_eq!(d.palette.len(), 5);
         assert_eq!(d.palette[2], "#ff6a3d");
         assert_eq!(d.typography, "Fraunces, serif");
@@ -1527,13 +1617,70 @@ mod no_fabrication_tests {
     }
 
     #[test]
+    fn a_missing_composition_fails_instead_of_defaulting_to_a_stack() {
+        let mut raw = good();
+        raw.as_object_mut().unwrap().remove("composition");
+        let err = normalize_direction(&raw, 1).expect_err("must not choose the layout");
+        assert!(err.contains("no composition"), "{err}");
+        assert!(err.contains("Ink Lantern"), "names the direction: {err}");
+    }
+
+    #[test]
+    fn the_note_is_optional_the_named_strategy_is_not() {
+        let mut raw = good();
+        raw.as_object_mut().unwrap().remove("composition_note");
+        let d = normalize_direction(&raw, 0).expect("the note is elaboration, not the decision");
+        assert_eq!(d.composition.as_deref(), Some("editorial-columns"));
+        assert!(d.composition_note.is_none());
+    }
+
+    #[test]
+    fn three_directions_may_not_share_one_composition() {
+        // The real failure: a brief suggests one good layout and the model
+        // answers with it three times in three palettes.
+        let parsed = serde_json::json!({
+            "directions": [good_with("grid"), good_with("collage"), good_with("GRID")],
+            "states": ["home", "detail", "empty"]
+        });
+        let err = normalize_invention(&parsed).expect_err("case-insensitively the same");
+        assert!(err.contains("reuses the composition"), "{err}");
+        assert!(err.contains("contrast in LAYOUT"), "{err}");
+    }
+
+    #[test]
+    fn stored_explorations_without_a_composition_still_replay() {
+        // Pre-2026-08-10 rows carry no composition. They must read back
+        // unchanged — this is the resume path, not an invention.
+        let old = Direction {
+            name: "Neon Wok".into(),
+            description: String::new(),
+            palette: vec!["#000000".into(); 5],
+            typography: "serif".into(),
+            composition: None,
+            composition_note: None,
+            families: None,
+            mood: String::new(),
+            voice: None,
+            texture: None,
+            motifs: None,
+            audience: None,
+        };
+        let json = serde_json::to_string(&old).expect("serializes");
+        assert!(!json.contains("composition"), "absent, not null: {json}");
+        let back: Direction = serde_json::from_str(&json).expect("round-trips");
+        assert!(back.composition.is_none());
+        // And it must not be described to a renderer as a composition.
+        assert!(!moodboard_lines(&back).contains("COMPOSITION"));
+    }
+
+    #[test]
     fn one_bad_direction_fails_the_whole_invention() {
         // Dropping it instead would desync the fixed 3x3 grid, which is keyed
         // by direction_index on every downstream render call.
         let mut bad = good();
         bad["palette"] = serde_json::json!([]);
         let parsed = serde_json::json!({
-            "directions": [good(), bad, good()],
+            "directions": [good_with("grid"), bad, good_with("collage")],
             "states": ["home", "detail", "empty"]
         });
         let err = normalize_invention(&parsed).expect_err("one bad direction fails the set");
@@ -1629,7 +1776,7 @@ mod no_fabrication_tests {
     #[test]
     fn a_whole_good_invention_passes() {
         let parsed = serde_json::json!({
-            "directions": [good(), good(), good()],
+            "directions": [good_with("grid"), good_with("layered-overlap"), good_with("collage")],
             "states": ["home", "detail", "empty"]
         });
         let inv = normalize_invention(&parsed).expect("all directions complete");
@@ -1732,6 +1879,8 @@ mod facts_tests {
                 .to_vec(),
             typography: "Georgia, serif / system-ui, sans-serif".into(),
             mood: String::new(),
+            composition: None,
+            composition_note: None,
             families: None,
             voice: None,
             texture: None,
@@ -1758,6 +1907,8 @@ mod facts_tests {
             palette: vec!["#000000".into(); 5],
             typography: "serif".into(),
             mood: String::new(),
+            composition: None,
+            composition_note: None,
             families: None,
             voice: None,
             texture: None,
@@ -1782,6 +1933,8 @@ mod facts_tests {
             typography: "Oswald poster display over quiet body".into(),
             families: Some(vec!["Oswald".into(), "Fraunces".into()]),
             mood: String::new(),
+            composition: None,
+            composition_note: None,
             voice: None,
             texture: None,
             motifs: None,
@@ -2028,8 +2181,9 @@ impl Plugin {
                        design brief. Each carries a name, a described visual strategy, \
                        a 5-colour palette (background, surface, accent, text, muted), \
                        typeface families drawn from the kit embedded in every \
-                       rendered document, a described type treatment and a mood. \
-                       Also picks 3 states \
+                       rendered document, a described type treatment, a NAMED \
+                       LAYOUT STRATEGY the three directions must not share, and \
+                       a mood. Also picks 3 states \
                        (views/screens) that suit this particular brief and are SHARED \
                        across all directions, so results can be compared side by side. \
                        Follow with render_state once per (direction x state). \

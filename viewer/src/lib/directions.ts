@@ -14,6 +14,15 @@ export interface Direction {
   /** Exactly 5 hex strings, in slot order: bg, surface, accent, text, muted. */
   palette: string[];
   typography: string;
+  /** The named layout strategy this direction commits to, and how it does it.
+   *
+   * Optional HERE and never required by this module, unlike the palette: the
+   * MCP half enforces it at invention time, and this same normalizer also
+   * reads `get_exploration` results, which for anything stored before
+   * 2026-08-10 carry no composition at all. The viewer cannot tell the two
+   * apart, so it displays what it is given rather than second-guessing. */
+  composition?: string;
+  composition_note?: string;
   /** Embedded font-kit families (≤2) — the MCP half injects their
    * @font-face blocks into every rendered document. */
   families?: string[];
@@ -65,11 +74,15 @@ function normalizeDirection(raw: unknown, index: number): Direction {
         `substitute a system font stack.`,
     );
   }
+  const str = (k: string) =>
+    typeof d[k] === "string" && (d[k] as string).trim() ? (d[k] as string) : undefined;
   return {
     name,
     description: typeof d.description === "string" ? d.description : "",
     palette,
     typography,
+    composition: str("composition"),
+    composition_note: str("composition_note"),
     families: Array.isArray(d.families)
       ? d.families.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
       : undefined,

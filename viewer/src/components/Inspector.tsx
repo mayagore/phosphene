@@ -270,8 +270,23 @@ export default function Inspector({
         </div>
         {direction.mood && <span className="ph-card-mood">{direction.mood}</span>}
         <p className="ph-card-desc">{direction.description}</p>
-        {(direction.voice || direction.texture || direction.motifs || direction.audience) && (
+        {(direction.composition ||
+          direction.voice ||
+          direction.texture ||
+          direction.motifs ||
+          direction.audience) && (
           <dl className="ph-moodboard">
+            {/* Composition leads — it is the decision that makes two
+                directions genuinely different rather than recoloured. */}
+            {direction.composition && (
+              <div>
+                <dt>layout</dt>
+                <dd>
+                  <strong>{direction.composition}</strong>
+                  {direction.composition_note && ` — ${direction.composition_note}`}
+                </dd>
+              </div>
+            )}
             {direction.voice && (
               <div>
                 <dt>voice</dt>
