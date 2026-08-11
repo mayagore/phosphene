@@ -891,13 +891,51 @@ fn extract_html(text: &str, label: &str) -> Result<String, String> {
         .filter_map(|needle| lower.find(needle))
         .min();
     match start {
-        Some(start) => Ok(text[start..]
-            .trim_end()
-            .trim_end_matches('`')
-            .trim_end()
-            .to_string()),
+        Some(start) => {
+            let raw = text[start..]
+                .trim_end()
+                .trim_end_matches('`')
+                .trim_end()
+                .to_string();
+            Ok(decode_json_string_body(&raw).unwrap_or(raw))
+        }
         None => Err(format!("no HTML document in the \"{label}\" response")),
     }
+}
+
+/// Rescue a document that is still JSON-STRING encoded.
+///
+/// When a model returns `{"html": "<!DOCTYPE html>\n<html ..."}` and that JSON
+/// does NOT parse — truncated, almost always — the raw scan above finds
+/// `<!doctype html` INSIDE the still-escaped string and returns it verbatim.
+/// The board is then stored with literal `\n` and `\"` where its line breaks
+/// and quotes should be, and renders as a wall of source text with no error
+/// anywhere. Measured on a real stored board: exploration 22711796…,
+/// direction 0, "stall page" — 249 literal `\n` sequences and exactly one
+/// real newline.
+///
+/// Signature of the escaped form: literal backslash-n present, real newlines
+/// absent. Returns None when the text looks like ordinary HTML, so a document
+/// that merely contains the two characters `\` and `n` is never touched.
+fn decode_json_string_body(text: &str) -> Option<String> {
+    if !text.contains("\\n") || text.contains('\n') {
+        return None;
+    }
+    // It came out of a JSON string, so serde is the correct decoder — it
+    // handles \uXXXX, which hand-rolled replacements get wrong.
+    if let Ok(decoded) = serde_json::from_str::<String>(&format!("\"{text}\"")) {
+        return Some(decoded);
+    }
+    // Truncation can leave a dangling escape that refuses to parse. Fall back
+    // to the escapes that actually appear in a rendered document.
+    Some(
+        text.replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\r", "\r")
+            .replace("\\\"", "\"")
+            .replace("\\/", "/")
+            .replace("\\\\", "\\"),
+    )
 }
 
 /// Normalize one direction. Optional flavour defaults; the DESIGN DECISIONS
@@ -1438,6 +1476,40 @@ mod no_fabrication_tests {
         let other = format!("{:?}", spawn_error(Upstream::OpenRouter, raw));
         assert!(other.contains("agents spawn:"), "{other}");
         assert!(!other.contains("login is not usable"));
+    }
+
+    /// Regression for a board found corrupted in live storage — see
+    /// `decode_json_string_body`.
+    #[test]
+    fn a_truncated_json_body_does_not_store_an_escaped_document() {
+        // Exactly the shape of the real failure: a JSON object whose closing
+        // brace never arrived, so parse_json_loose cannot read it and the raw
+        // scan finds the doctype inside the still-escaped string.
+        let truncated = r#"{"label": "stall page", "html": "<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\">\n<head>\n<style>\n  body { color: #fff; }\n</style>"#;
+        let html = extract_html(truncated, "stall page").expect("recovers a document");
+        assert!(html.starts_with("<!DOCTYPE html>\n"), "{}", &html[..40]);
+        assert!(html.contains("xmlns=\"http://www.w3.org/1999/xhtml\""));
+        assert!(!html.contains("\\n"), "no literal backslash-n survives");
+        assert!(html.lines().count() > 3, "real line breaks, not one long line");
+    }
+
+    #[test]
+    fn ordinary_html_is_never_unescaped() {
+        // A normal document has real newlines, so the rescue must not fire —
+        // and a document that legitimately contains the characters \ and n
+        // inside a script or a CSS content string must survive untouched.
+        let normal = "<!DOCTYPE html>\n<html>\n<body><p>path\\name</p></body>\n</html>";
+        let html = extract_html(normal, "x").expect("plain html");
+        assert!(html.contains("path\\name"), "{html}");
+        assert_eq!(decode_json_string_body(normal), None);
+    }
+
+    #[test]
+    fn a_well_formed_json_body_still_takes_the_fast_path() {
+        let good = r#"{"html": "<!DOCTYPE html>\n<html><body>ok</body></html>"}"#;
+        let html = extract_html(good, "x").expect("parses");
+        assert!(html.starts_with("<!DOCTYPE html>\n"));
+        assert!(html.contains("<body>ok</body>"));
     }
 
     #[test]
