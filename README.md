@@ -38,12 +38,35 @@ phosphene bugs when they bite:
 |---|---|
 | ObjectiveAI CLI **≥ 2.2.15** | Earlier releases cannot render *any* plugin tab. |
 | podman machine with **≥ 6 GiB** | The default 2 GiB OOM-kills the MCP half's Rust build, and the SIGKILL surfaces as an unrelated MCP 502. |
-| A live local **`claude` login** on the daemon host — **or** a declared upstream | Invention and rendering default to `claude_agent_sdk`: free, and measurably denser (9,280 chars vs 6,179 on the same brief). It needs the machine's own Claude Code login. **No login? Pass `upstream: "openrouter"` to `invent_directions` / `render_state` / `refine_state`** and it works without one — metered, and a little thinner. Phosphene names a lapsed login for what it is; the platform itself reports it as `"Claude Code returned an error result: success"`. |
+| **Your own Claude Code subscription**, signed in on the daemon host — **or** a declared upstream | Invention and rendering default to `claude_agent_sdk`, which runs on that machine's own `claude` login: free per run, and measurably denser (9,280 chars vs 6,179 on the same brief). This is a dependency on a subscription you hold separately, not something phosphene provides. **No login? Pass `upstream: "openrouter"` to `invent_directions` / `render_state` / `refine_state`** and it works without one — billed to your OpenRouter account, and a little thinner. Phosphene names a lapsed login for what it is; the platform itself reports it as `"Claude Code returned an error result: success"`. See the cost section below. |
 | **MCP timeout env on the daemon**, exported *before* it starts | `MCP_TOOL_TIMEOUT`, `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`, `MAX_MCP_OUTPUT_TOKENS`. Without them claude's MCP client kills any tool call silent for 60s — which is essentially every render — and orphans the nested completion. `scripts/resume.sh` exports these for you; a daemon started any other way must be killed and respawned through it. This one is a platform limitation a plugin cannot fix from its side. |
 
-Judging costs money — judges run on OpenRouter, one completion per
-(direction × judge). Invention and rendering do not, on the Claude login.
-Phosphene does not meter spend for you yet.
+### What it costs, and what phosphene can and cannot tell you
+
+**On the default seats, generation is free** — invention and rendering run on
+`claude_agent_sdk`, which uses the daemon host's own Claude Code login. That
+means the person running phosphene needs **their own Claude subscription**, and
+must stay signed in on the machine running the daemon. It is the better output
+(measured: 9,280 characters against 6,179 on the same brief) and it costs
+nothing per run, but it is a dependency on a separate subscription and it is
+worth knowing before you start rather than when a run fails.
+
+**Judging always costs money**, and so does generation if you pass
+`upstream: "openrouter"` — one completion per call, billed to your OpenRouter
+account.
+
+**Phosphene cannot show you that spend, and neither can the platform.**
+Measured on 2.2.15: `agents spawn`'s response schema contains no `cost`,
+`usage` or `token` field at all, and the one reporting surface that exists —
+`objectiveai agents logs token-usage get --agent-instance-hierarchy <AIH>` —
+returns only `total_tokens`, which is **`0`** for a `claude_agent_sdk` run that
+produced nine full documents.
+
+So phosphene shows you no per-run total and enforces no ceiling. It could
+multiply a token count by a hardcoded price table and print a dollar figure,
+and that figure would be invented — the same class of thing as the palette it
+refuses to invent. **Watch your OpenRouter dashboard for real spend.** If you
+want a hard cap, set one there, not here.
 
 **If a direction comes back without a palette or a type choice, the run fails
 and says so.** Phosphene does not invent design decisions on a model's behalf
