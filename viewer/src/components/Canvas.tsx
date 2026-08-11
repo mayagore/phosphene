@@ -78,7 +78,15 @@ export default function Canvas({
   const [panning, setPanning] = useState(false);
   const targetRef = useRef<Viewport>(initialViewport ?? { x: 0, y: 0, zoom: 0.4 });
   const rafRef = useRef(0);
-  const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+    moved: boolean;
+    /** Resolved at pointerdown — see handlePointerDown. */
+    shape: BoardShape | undefined;
+  } | null>(null);
   const hadShapesRef = useRef(initialViewport !== undefined);
 
   useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
@@ -144,21 +152,31 @@ export default function Canvas({
     [layout.shapes],
   );
 
-  const handlePointerDown = useCallback((e: React.PointerEvent) => {
-    if (e.button !== 0 && e.button !== 1) return;
-    // Buttons keep their own clicks — pan starts anywhere else.
-    if ((e.target as HTMLElement).closest("button, a")) return;
-    cancelAnimationFrame(rafRef.current);
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      originX: targetRef.current.x,
-      originY: targetRef.current.y,
-      moved: false,
-    };
-    setPanning(true);
-    containerRef.current?.setPointerCapture(e.pointerId);
-  }, []);
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.button !== 0 && e.button !== 1) return;
+      // Buttons keep their own clicks — pan starts anywhere else.
+      if ((e.target as HTMLElement).closest("button, a")) return;
+      cancelAnimationFrame(rafRef.current);
+      dragRef.current = {
+        startX: e.clientX,
+        startY: e.clientY,
+        originX: targetRef.current.x,
+        originY: targetRef.current.y,
+        moved: false,
+        // Resolved HERE, while e.target is still the element under the
+        // cursor. Pointer capture retargets every later event for this
+        // pointer to the container — including pointerup — so reading the
+        // shape at release time always found the canvas and every click on a
+        // board fell through to "clicked the background", clearing the
+        // selection instead of making one.
+        shape: shapeFromTarget(e.target),
+      };
+      setPanning(true);
+      containerRef.current?.setPointerCapture(e.pointerId);
+    },
+    [shapeFromTarget],
+  );
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const drag = dragRef.current;
@@ -172,16 +190,15 @@ export default function Canvas({
   }, []);
 
   const handlePointerUp = useCallback(
-    (e: React.PointerEvent) => {
+    (_e: React.PointerEvent) => {
       const drag = dragRef.current;
       dragRef.current = null;
       setPanning(false);
       if (!drag || drag.moved) return;
-      const shape = shapeFromTarget(e.target);
-      if (shape) onShapeClick(shape);
+      if (drag.shape) onShapeClick(drag.shape);
       else onBackgroundClick();
     },
-    [shapeFromTarget, onShapeClick, onBackgroundClick],
+    [onShapeClick, onBackgroundClick],
   );
 
   const zoomToFit = useCallback(() => {

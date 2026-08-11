@@ -967,6 +967,13 @@
   color: var(--ph-color-accent-on);
 }
 
+/* Full-bleed for the LOOK, inert to the pointer. It stays inset:0 because the
+ * reveal is a gradient across the whole board, but as a live button covering
+ * every done cell it swallowed the canvas: Canvas bails out of panning and
+ * double-click on `closest("button, a")`, and done cells cover most of the
+ * board — so dragging to pan did nothing and double-click-to-open was dead
+ * exactly where it was most wanted. Only the pill takes the pointer now, and
+ * the hover reveal moves to the shape. */
 .ph-artboard-open {
   position: absolute;
   inset: 0;
@@ -979,9 +986,13 @@
   cursor: pointer;
   opacity: 0;
   transition: opacity 120ms ease;
+  pointer-events: none;
 }
 
-.ph-artboard-open:hover,
+.ph-artboard-open span { pointer-events: auto; }
+
+.ph-shape:hover .ph-artboard-open,
+.ph-artboard-open:focus-within,
 .ph-artboard-open:focus-visible {
   opacity: 1;
   outline: none;

@@ -164,11 +164,35 @@ export default function Phosphene({ arguments: _args }: TabProps) {
 
   useEffect(() => {
     let disposed = false;
-    void checkDaemon().then((next) => {
-      if (!disposed) setHealth(next);
-    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    // The tab used to probe ONCE at mount. Submitting requires health.ready,
+    // so a tab opened before the stack was up stayed dead for the life of the
+    // mount — while telling the user, in two places, that it "clears on its
+    // own". It never did. It does now: re-probe until reachable, and again
+    // whenever the tab is brought back to the front (the common case is the
+    // user going to start the daemon and coming back).
+    const probe = () => {
+      void checkDaemon().then((next) => {
+        if (disposed) return;
+        setHealth(next);
+        if (next.state !== "ready") timer = setTimeout(probe, 4000);
+      });
+    };
+    probe();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && !disposed) {
+        clearTimeout(timer);
+        probe();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       disposed = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
       // KNOWN LIMIT: breaking the stream cancels the daemon-side run, so
       // closing the tab kills the agent mid-work. The fix is reattach-by-AIH
       // (agentsInstancesListener) — a future slice; noted rather than hidden.
