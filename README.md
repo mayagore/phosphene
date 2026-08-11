@@ -38,7 +38,7 @@ phosphene bugs when they bite:
 |---|---|
 | ObjectiveAI CLI **≥ 2.2.15** | Earlier releases cannot render *any* plugin tab. |
 | podman machine with **≥ 6 GiB** | The default 2 GiB OOM-kills the MCP half's Rust build, and the SIGKILL surfaces as an unrelated MCP 502. |
-| A live local **`claude` login** on the daemon host | Invention and rendering run on `claude_agent_sdk` — free and denser than the metered alternative, but it needs the machine's own Claude Code login. A lapsed login is reported by the platform as the nonsense string `"Claude Code returned an error result: success"`. |
+| A live local **`claude` login** on the daemon host — **or** a declared upstream | Invention and rendering default to `claude_agent_sdk`: free, and measurably denser (9,280 chars vs 6,179 on the same brief). It needs the machine's own Claude Code login. **No login? Pass `upstream: "openrouter"` to `invent_directions` / `render_state` / `refine_state`** and it works without one — metered, and a little thinner. Phosphene names a lapsed login for what it is; the platform itself reports it as `"Claude Code returned an error result: success"`. |
 | **MCP timeout env on the daemon**, exported *before* it starts | `MCP_TOOL_TIMEOUT`, `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`, `MAX_MCP_OUTPUT_TOKENS`. Without them claude's MCP client kills any tool call silent for 60s — which is essentially every render — and orphans the nested completion. `scripts/resume.sh` exports these for you; a daemon started any other way must be killed and respawned through it. This one is a platform limitation a plugin cannot fix from its side. |
 
 Judging costs money — judges run on OpenRouter, one completion per

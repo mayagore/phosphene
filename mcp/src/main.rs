@@ -56,7 +56,7 @@ const ARTBOARD_HEIGHT: u32 = 720;
 
 /// Which upstream runs a completion. They take different specs, and mixing
 /// them is silent rather than an error — see `run_agent`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Upstream {
     OpenRouter,
     /// Runs on the machine's own Claude Code login. No key, and BYOK is
@@ -306,6 +306,15 @@ pub struct InventArgs {
     /// render, score, refine, across any number of agent runs — uses the SAME
     /// id; it is the key the daemon-database rows are scoped by.
     pub exploration_id: String,
+    /// "claude_agent_sdk" (default) or "openrouter". The default runs on the
+    /// daemon host's own Claude Code login — free, and it invents better
+    /// palettes — so OMIT this unless that host has no `claude` login.
+    #[serde(default)]
+    pub upstream: Option<String>,
+    /// The inventing model. Defaults to "sonnet". Must be a model the chosen
+    /// upstream serves.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -331,6 +340,18 @@ pub struct RenderArgs {
     /// get there. Pass this only to override the cache with different markup.
     #[serde(default)]
     pub anchor_html: Option<String>,
+    /// "claude_agent_sdk" (default) or "openrouter". The default runs on the
+    /// daemon host's own Claude Code login — free, and measurably denser
+    /// (9,280 chars vs 6,179 on the same brief) — so OMIT this unless that
+    /// host has no `claude` login. Giving DIFFERENT directions different
+    /// seats is a legitimate use: one model's aesthetic defaults are the
+    /// reason three directions can come out looking alike.
+    #[serde(default)]
+    pub upstream: Option<String>,
+    /// The generating model. Defaults to "sonnet". Must be a model the chosen
+    /// upstream serves.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -360,6 +381,14 @@ pub struct RefineArgs {
     /// The feedback to apply, verbatim — the user's words, or a judge's
     /// note. The revision changes ONLY what this demands.
     pub feedback: String,
+    /// "claude_agent_sdk" (default) or "openrouter". Match whatever rendered
+    /// this state unless you have a reason not to — a revision by a different
+    /// model is a different hand on the same drawing.
+    #[serde(default)]
+    pub upstream: Option<String>,
+    /// The revising model. Defaults to "sonnet".
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -521,6 +550,33 @@ fn internal(message: impl Into<String>) -> rmcp::ErrorData {
 // reads as a table of what differs between invention, generation and judging.
 // A params struct would hide exactly that comparison.
 #[allow(clippy::too_many_arguments)]
+/// Resolve an optional wire string to an [`Upstream`], falling back to the
+/// step's compiled default.
+///
+/// Every generating step takes `upstream`/`model` as OPTIONAL arguments, so a
+/// host without a Claude Code login can declare `"openrouter"` and use
+/// phosphene at all, and so an agent can give each direction a different seat
+/// rather than having one aesthetic recompiled into the binary. The defaults
+/// below are unchanged and measured — see `GENERATION_UPSTREAM`.
+fn parse_upstream(raw: Option<&str>, default_to: Upstream) -> Result<Upstream, rmcp::ErrorData> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(default_to),
+        Some("openrouter") => Ok(Upstream::OpenRouter),
+        Some("claude_agent_sdk") => Ok(Upstream::ClaudeAgentSdk),
+        Some(other) => Err(internal(format!(
+            "unknown upstream \"{other}\" — valid: openrouter, claude_agent_sdk"
+        ))),
+    }
+}
+
+/// The model for a step: the caller's, else the step's compiled default.
+fn seat_model<'a>(raw: Option<&'a str>, default_to: &'a str) -> &'a str {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(model) => model,
+        None => default_to,
+    }
+}
+
 /// Translate a spawn failure into something the person reading it can act on.
 ///
 /// The platform reports a lapsed Claude Code login as the literal string
@@ -1385,6 +1441,40 @@ mod no_fabrication_tests {
     }
 
     #[test]
+    fn an_omitted_seat_keeps_the_compiled_default() {
+        // The whole point: existing callers change nothing.
+        assert!(matches!(
+            parse_upstream(None, Upstream::ClaudeAgentSdk).unwrap(),
+            Upstream::ClaudeAgentSdk
+        ));
+        assert!(matches!(
+            parse_upstream(Some("  "), Upstream::OpenRouter).unwrap(),
+            Upstream::OpenRouter
+        ));
+        assert_eq!(seat_model(None, "sonnet"), "sonnet");
+        assert_eq!(seat_model(Some(""), "sonnet"), "sonnet");
+    }
+
+    #[test]
+    fn a_declared_seat_overrides_the_default() {
+        assert!(matches!(
+            parse_upstream(Some("openrouter"), Upstream::ClaudeAgentSdk).unwrap(),
+            Upstream::OpenRouter
+        ));
+        assert_eq!(seat_model(Some("gpt-4o-mini"), "sonnet"), "gpt-4o-mini");
+    }
+
+    #[test]
+    fn an_unknown_upstream_names_the_valid_ones() {
+        let err = format!(
+            "{:?}",
+            parse_upstream(Some("anthropic"), Upstream::OpenRouter).unwrap_err()
+        );
+        assert!(err.contains("openrouter"), "{err}");
+        assert!(err.contains("claude_agent_sdk"), "{err}");
+    }
+
+    #[test]
     fn an_ordinary_spawn_error_is_passed_through() {
         let msg = format!("{:?}", spawn_error(Upstream::ClaudeAgentSdk, "connection refused"));
         assert!(msg.contains("agents spawn: connection refused"), "{msg}");
@@ -1746,7 +1836,9 @@ impl Plugin {
                        Also picks 3 states \
                        (views/screens) that suit this particular brief and are SHARED \
                        across all directions, so results can be compared side by side. \
-                       Follow with render_state once per (direction x state)."
+                       Follow with render_state once per (direction x state). \
+                       Runs on the daemon host's Claude Code login by default; pass \
+                       upstream=\"openrouter\" if that host has no `claude` login."
     )]
     async fn invent_directions(
         &self,
@@ -1757,11 +1849,12 @@ impl Plugin {
             return Err(internal("brief is empty"));
         }
 
+        let upstream = parse_upstream(args.upstream.as_deref(), INVENTION_UPSTREAM)?;
         let text = run_agent(
             &invent_prompt(),
             brief,
-            INVENTION_UPSTREAM,
-            INVENTION_MODEL,
+            upstream,
+            seat_model(args.model.as_deref(), INVENTION_MODEL),
             // Thinking on: choosing three genuinely different, tasteful
             // directions is judgment, and deliberation is where taste lives.
             true,
@@ -1876,11 +1969,12 @@ impl Plugin {
         // Anchors reach prompts with font payloads elided — the declaration
         // (and family name) survives; 30 KB of base64 does not.
         let lean_anchor = anchor_html.as_deref().map(fonts::elide_font_payloads);
+        let upstream = parse_upstream(args.upstream.as_deref(), GENERATION_UPSTREAM)?;
         let text = run_agent(
             &render_system_prompt(&states, label, lean_anchor.as_deref()),
             &user,
-            GENERATION_UPSTREAM,
-            GENERATION_MODEL,
+            upstream,
+            seat_model(args.model.as_deref(), GENERATION_MODEL),
             GENERATION_THINKING,
             // Both ignored on claude_agent_sdk — those fields do not exist
             // there. Kept for the openrouter branch, where 0.7 is lower than
@@ -2050,8 +2144,8 @@ impl Plugin {
         let text = run_agent(
             &refine_system_prompt(&states, label, lean_anchor.as_deref()),
             &refine_user_prompt(&direction, label, &lean_current, feedback),
-            GENERATION_UPSTREAM,
-            GENERATION_MODEL,
+            parse_upstream(args.upstream.as_deref(), GENERATION_UPSTREAM)?,
+            seat_model(args.model.as_deref(), GENERATION_MODEL),
             // Revision is judgment about what NOT to touch — thinking on.
             true,
             0.7,
@@ -2107,15 +2201,9 @@ impl Plugin {
                 "model is required — the agent picks the jury, phosphene owns only the rubric",
             ));
         }
-        let upstream = match args.upstream.as_deref() {
-            None | Some("openrouter") => Upstream::OpenRouter,
-            Some("claude_agent_sdk") => Upstream::ClaudeAgentSdk,
-            Some(other) => {
-                return Err(internal(format!(
-                    "unknown upstream \"{other}\" — valid: openrouter, claude_agent_sdk"
-                )));
-            }
-        };
+        // Judging defaults to openrouter, unlike the generating steps: a
+        // claude judge would be marking its own homework.
+        let upstream = parse_upstream(args.upstream.as_deref(), Upstream::OpenRouter)?;
 
         // Read everything needed out of the cache, then DROP the lock before
         // the await below — a std::sync::Mutex may never be held across one.
