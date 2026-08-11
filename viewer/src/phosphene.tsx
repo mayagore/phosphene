@@ -193,9 +193,23 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       disposed = true;
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
-      // KNOWN LIMIT: breaking the stream cancels the daemon-side run, so
-      // closing the tab kills the agent mid-work. The fix is reattach-by-AIH
-      // (agentsInstancesListener) — a future slice; noted rather than hidden.
+      // KNOWN LIMIT: closing the tab loses the VIEW of a run. It probably does
+      // NOT kill the run — this comment used to claim it did, and measurement
+      // on 2026-08-10 says otherwise: a laptop sleeping killed the CLI client
+      // of a live 9-render exploration and the daemon kept rendering, 6 boards
+      // to 7 to 9, `last_active_at` advancing the whole time. That matches the
+      // daemon's own default (`agents spawn` runs stream-false work as a
+      // "detached in-process daemon task" that "outlives this call") and
+      // Ronald's ruling that a client's death orphaning its spawn is intended.
+      //
+      // Not yet proven for THIS path specifically: what died was a CLI client,
+      // not a viewer tab. Both drop a `/execute` stream, so the inference is
+      // strong, but it is an inference.
+      //
+      // Either way the fix is the same and is now worth more than we scoped:
+      // reattach-by-AIH (agentsInstancesListener). The work survives; only the
+      // display is lost, and the AIH needed to find it again is already in
+      // hand — see `aih` on AgentProgress.
       abort.current.aborted = true;
     };
   }, []);
