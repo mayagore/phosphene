@@ -880,8 +880,14 @@
 
 /* One cell on the stage. Neutral in both modes — chrome never tints
  * generated work. */
+/* content-box, deliberately. The tab document carries Tailwind preflight's
+ * `box-sizing: border-box`, so the inline 400x720 was the BORDER box and the
+ * content box was 396x716 — quietly shaving 4px off the right and bottom of
+ * every artboard, which is the product. The frame is 400x720; the border is
+ * chrome that belongs outside it. */
 .ph-shape {
   position: absolute;
+  box-sizing: content-box;
   overflow: hidden;
   border: 2px solid var(--ph-color-border-subtle);
   border-radius: 8px;
@@ -1155,6 +1161,10 @@
   font-size: var(--ph-text-title);
   line-height: var(--ph-text-title--line-height);
   font-weight: 600;
+  /* .ph-inspector computes overflow-x: auto, so one unbreakable string here
+   * put a horizontal scrollbar on the WHOLE panel and stole vertical space
+   * from the column. Same reason .ph-judge-failure already does this. */
+  overflow-wrap: anywhere;
 }
 
 .ph-insp-title > span {
@@ -1295,6 +1305,7 @@
   font-family: ui-monospace, monospace;
   font-size: var(--ph-text-caption);
   color: var(--ph-color-text-secondary);
+  overflow-wrap: anywhere;
 }
 
 .ph-fact {
@@ -1311,6 +1322,8 @@
   color: var(--ph-color-text-secondary);
   font-variant-numeric: tabular-nums;
   text-align: right;
+  /* fonts_embedded joins family names — easily longer than the panel. */
+  overflow-wrap: anywhere;
 }
 
 .ph-fact--bad .ph-fact-value { color: var(--ph-color-score-low); font-weight: 600; }
@@ -1379,12 +1392,17 @@
   flex-direction: column;
   gap: var(--ph-spacing-3);
   max-height: 100%;
+  max-width: 100%;
 }
 
 .ph-zoom-head {
   display: flex;
   align-items: baseline;
   gap: var(--ph-spacing-3);
+  /* Five buttons plus the direction name. .ph-zoom is position:fixed, so it
+   * escapes .ph-root's clip entirely — unwrapped, the controls ran off the
+   * screen edge on a narrow window instead of being cut off politely. */
+  flex-wrap: wrap;
 }
 
 .ph-zoom-name {
