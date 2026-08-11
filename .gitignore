@@ -5,3 +5,6 @@ out/
 
 # Guard: a bad shell redirect once committed a 10MB blob here.
 undefined/
+
+# Worktrees live under .claude/ in the main checkout; .claude/skills/ is tracked.
+.claude/worktrees/

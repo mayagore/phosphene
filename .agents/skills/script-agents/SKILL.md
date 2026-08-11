@@ -99,11 +99,11 @@ same tool call forever.
   NOT pre-imported. `json.dumps` without `import json` fails with
   `NameError: name 'json' is not defined`.
 - **Tool names are prefixed.** A plugin's tool is exposed as
-  `<plugin-name>_<tool-name>` — e.g. the scaffold's
-  `scaffold_note_write_deleteme` is called as
-  `phosphene_invent_directions`. The
-  prefix derives from the plugin's NAME, not its owner. Get it wrong
-  and the call silently finds no tool.
+  `<plugin-name>_<tool-name>` — phosphene's `invent_directions` reaches
+  an agent as `phosphene_invent_directions`. The prefix derives from the
+  plugin's NAME, not its owner. Get it wrong and the call silently finds
+  no tool. `agents mcp tools` against a live agent shows the exact
+  prefixed names it can see.
 - **`arguments` is a JSON STRING**, not an object — hence
   `json.dumps({...})`.
 - **Write the agent to a file** and pass `--agent-file`. Embedding a

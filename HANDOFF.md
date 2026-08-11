@@ -253,54 +253,53 @@ Two consequences, and the second is the useful one:
    against that seat and retry or degrade with the panel size recorded. This is
    strictly better than the feared silent average over a hole.
 
-### ~~READ PATH — most instruments lie~~ — WRONG. Retracted 2026-08-07.
+### READ PATH — split the target, and the instruments are fine
 
-**The instruments do not lie. We were holding one of them wrong**, and every
-"defect" below followed from that single mistake. Reproduced live at 2.2.15.
+> **Corrected 2026-08-07.** This section previously claimed that
+> `agents instances get` reports `logged: 0` for runs that executed, that
+> `agents logs list` returns zero rows in every target form, and that
+> `logs open --id N` was the only path that worked. All three were wrong,
+> reproduced live against 2.2.15. One mistake produced all of them.
 
-**The root cause: passing the JOINED hierarchy as `instance=`.** A spawn prints
-a path (`daemon/<leaf>`). Passing `--target "instance=daemon/<leaf>"` resolves to
-`cli/daemon/<leaf>` — an AIH that never ran — and the daemon **zero-fills** it.
-Pass the leaf alone: `--target "instance=$LEAF,parent=daemon"`.
+A spawn prints a **path** — `daemon/<leaf>` — not an instance. Split it: the last
+segment is the INSTANCE, everything before it is the PARENT. Passing the joined
+string as `instance=` fabricates a target (`instance=daemon/<leaf>` resolves to
+`cli/daemon/<leaf>`), which never ran, and the daemon **zero-fills** it. That
+zero-fill is the `logged: 0`. The same bad target explains the empty `logs list`.
 
-The retracted claims, each corrected:
+```bash
+# RIGHT
+objectiveai agents logs list --target "instance=$LEAF,parent=daemon" --all
+objectiveai agents logs open --id 2422        # part content for a row
 
-- ~~`agents instances get` reports `logged: 0` for runs that executed.~~ It
-  agrees with `instances list` when the target is correct. `logged: 0` was the
-  zero-fill. Source: `objectiveai-daemon/src/command/agents/instances/get.rs:1-4`
-  — *"always yields an item, zero-filled when it has no activity."*
-- ~~`agents logs list` returns zero rows in every target form.~~ It works:
-  `--target "instance=$LEAF,parent=daemon" --all`. Zero rows come from omitting
-  the required `--all`/`--pending`, from `--pending` on a finished run, or from
-  `--target me` (the CLI is not an agent). Source: `.../logs/list.rs:21-23`.
-- ~~The path that works is bisecting `logs open --id`.~~ Not needed. Read the run
-  with `logs list … --all`, then `logs open --id N` for part content.
-- ~~A not-found row has `error: null`.~~ It has **no `error` key at all**
-  (exit 1) — the schema's `Error` variant requires `error`. Real failures have it
-  populated. That absence is the reliable discriminator.
-- ~~`agents wait --inactive` consumes its entire timeout budget.~~ It returns
-  `"Ok"` in **0s**. `--active` is the one that burns the timeout and exits 1.
-- **`parent=` is ABSOLUTE**, not caller-relative. The CLI substitutes its own
-  hierarchy only when `parent` is *omitted*.
+# WRONG — exits 0, prints nothing, reads as "the agent logged nothing"
+objectiveai agents logs list --target "instance=daemon/$LEAF" --all
+```
 
-**Latency is lane-dependent, not a contract.** A 2026-08-02 openrouter judge
-panel took ~4 minutes; a haiku probe on 2026-08-08 logged its rows in 1 second.
-Measure it; do not assume either way. (The earlier "minutes, not seconds" was
-one lane generalized into a rule.)
+Source: `objectiveai-daemon/src/command/agents/instances/get.rs:1-4` ("always
+yields an item, zero-filled when it has no activity") and `.../logs/list.rs:21-23`.
 
-**The intended model, from Ronald 2026-08-07:** spawn and message RETURN the
-AIH; you keep that handle and use it for `logs subscribe` / `list`. There is no
-"find the orphan" query because you are not meant to lose the handle.
+What is actually true:
 
-Invariant worth keeping: `instances get .logged` == Σ(`parts` over
-`logs list --all`) + 1. The +1 is the `agent_completion_request` blob, which
-`logs list` never emits and only `logs open --id` can read.
-
-**The lesson is bigger than the commands.** This section sat here for days
-asserting the platform was broken, and it was read as settled fact because it was
-written down. Prefer source — it is readable, see below — over any claim in this
-file, including this one.
-
+- **Exactly one of `--all` / `--pending` is required.** `--pending` reads only
+  unfinalized rows, so it is correctly empty for a run that has finished — which
+  is indistinguishable from a bad target, since both exit 0 with no output.
+- **`parent=` is absolute.** The CLI substitutes its own hierarchy only when
+  `parent` is *omitted* — which is why omitting it for a spawned child finds
+  nothing. `--target me` returns nothing from `logs list` because the CLI is not
+  an agent.
+- **A not-found row has no `error` key at all** (exit 1); a genuine failure has
+  `error` populated. The response schema's `Error` variant *requires* `error`, so
+  `error: null` is not a permitted shape and cannot be the discriminator.
+- **`agents wait --inactive` returns `"Ok"` in 0s** and does so for an id that
+  never existed, so it proves nothing on its own. `--active` is the one that
+  burns the full timeout, then exits 1.
+- **Latency is lane-dependent, not a contract.** A 2026-08-02 openrouter judge
+  panel took ~4 minutes; a haiku probe on 2026-08-08 logged its rows in 1 second.
+  Measure it, do not assume either way.
+- Useful invariant: `instances get .logged` == Σ(`parts` across
+  `logs list --all`) + 1. The +1 is the `agent_completion_request` blob, which
+  `logs list` never emits and only `logs open --id` can read.
 ### Why functions are going away — the bigger picture
 
 Ronald, in the same conversation:
@@ -421,36 +420,27 @@ deviation needs a written reason.**
 
 ## Read this before touching anything
 
-~~**Every local ObjectiveAI checkout on this machine is stale and will mislead
-you.** `~/Desktop/work/objectiveai` and `~/Programming/objectiveai` are at
-2026-06-12; `~/oai_research/objectiveai` at 2026-06-22.~~
+> **Corrected 2026-08-07.** This section previously said every local ObjectiveAI
+> checkout was stale and would mislead you. That is no longer true of
+> `~/Programming/objectiveai`, and the claim is why nobody read the source that
+> would have settled several questions in an afternoon.
 
-**CORRECTED 2026-08-08: `~/Programming/objectiveai` is now at
-`objectiveai-sdk-go/v2.2.15`, version-exact with the installed CLI — it is
-readable and it is the fastest way to check platform behavior.** Confirm before
-trusting it:
+**`~/Programming/objectiveai` is version-exact with the installed CLI.** Confirm
+before trusting it — the point is the habit, not the answer:
 
 ```bash
 objectiveai --version && git -C ~/Programming/objectiveai describe --tags
 ```
 
-The other two checkouts are still stale and still carry a top-level `PLUGINS.md`
-that no longer exists upstream. The plugin system was rebuilt 2026-07-28 and the
-scaffolder shipped 2026-07-30. **When the local checkout does not match the
-installed CLI, read HEAD.** Prefer reading source (or `<leaf> request-schema`,
-which carries the Rust doc comments) over believing any written claim in this
-file — several recorded "the instrument is broken" findings turned out to be
-usage errors.
+- `objectiveai-sdk-rs/src/cli/command/agents/` — command surface and types
+- `objectiveai-daemon/src/command/agents/` — what the commands actually do
+- `objectiveai agents <leaf> request-schema` — Rust doc comments carry into the
+  schema descriptions, so this is self-documenting and often faster than the file
 
-Working checkout used for Pass 1 (blobless sparse clone, scratchpad — recreate it
-rather than trusting it to persist):
-
-```bash
-git clone --depth 1 --filter=blob:none --sparse https://github.com/ObjectiveAI/objectiveai
-```
-
-Everything so far was read at HEAD `e79dadb` (2026-07-30).
-
+The other checkouts on this machine ARE stale: `~/Desktop/work/objectiveai`
+(2026-06-12, unrelated branch, 34G) and `~/oai_research/objectiveai` (2026-06-22).
+Pass 1 below was read at HEAD `e79dadb` (2026-07-30) from a throwaway sparse
+clone; prefer the local checkout now.
 ## Findings that change what gets built
 
 1. **The platform's docs are split.** The root `README.md` omits Functions,

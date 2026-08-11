@@ -83,12 +83,15 @@ per-completion container.
 ## Using the database
 
 The database is an OPT-IN: `"postgres": true` in the manifest's `mcp`
-block. **Phosphene opts OUT** (`"postgres": false`) — its tools store
-nothing across runs; the reason is written in
-`../docs/spikes/02-plugin-authoring.md` §7, and the fallback plan if that
-reverses is pre-written in `src/main.rs` beside the cache. Only then does the host give the
-container a Postgres — relayed through a proxy on the container's own
-loopback — so a plugin never configures one, it asks:
+block. **Phosphene opts IN** — `objectiveai.json` has `"postgres": true`
+(flipped in `8f2da18`; `../docs/scoring.md` has the reason, and
+`../docs/spikes/02-plugin-authoring.md` §7 records the earlier opt-out as
+a dated record, not current state). Explorations persist by
+`exploration_id`, in a per-plugin SCHEMA
+`plugin_<owner>_<name>_<version>_<hash>` inside the daemon's `objectiveai`
+database. Only with the opt-in does the host give the container a Postgres —
+relayed through a proxy on the container's own loopback — so a plugin never
+configures one, it asks:
 
 ```rust
 let pool = db::connect(Default::default()).await?;

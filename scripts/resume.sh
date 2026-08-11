@@ -173,5 +173,6 @@ if $CHECK_ONLY; then
 else
   say "Ready. Switch to the phosphene tab; a tab switch picks up a new build."
   say "Watch it work:  tail -f ~/.objectiveai/state/default/viewer/viewer-logs/*.jsonl"
+  say "Re-check what the docs claim about the CLI:  bash scripts/verify-claims.sh"
 fi
 printf '\n'

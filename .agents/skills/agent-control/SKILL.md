@@ -28,9 +28,12 @@ good way to confirm a split:
 ```
 
 **Most commands take the INSTANCE ALONE, never the joined hierarchy.**
-Ancestors go separately in `parent=`, and the CLI prepends its own AIH
-to whatever you pass there — so `parent=daemon` resolves to
-`cli/daemon` above.
+Ancestors go separately in `parent=`, and **`parent=` is absolute** — the
+CLI substitutes its own AIH only when `parent` is OMITTED. A spawn that
+printed `daemon/<leaf>` is reached with `parent=daemon`, not
+`parent=cli/daemon`. (Corrected 2026-08-07: this said the CLI prepends
+its own AIH to whatever you pass. It does not — verified with both
+forms, where the prepended one resolves to a target that never ran.)
 
 ## Run the command directly. Do NOT redirect to a file.
 
@@ -85,7 +88,10 @@ is far more likely to be a bad target than a quiet agent. `parent`
 defaults to the CLI's own hierarchy when omitted, which is why omitting
 it for a spawned child finds nothing.
 
-`--all` or `--pending` is required (exactly one).
+`--all` or `--pending` is required (exactly one). **`--pending` reads only
+unfinalized rows**, so it is correctly empty for a run that has already
+finished — which looks identical to the bad-target case above. Reach for
+`--all` unless you are deliberately watching something mid-flight.
 
 ### The two-step read
 
