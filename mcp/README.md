@@ -112,6 +112,18 @@ delete the rest:
   distinctly named table, and scope rows by
   `identity().agent_instance_hierarchy` — the next container over is a
   different agent reading the same table.
+
+  **Phosphene deliberately does NOT do this, and the reason matters.**
+  Scoping by agent instance would make an exploration readable only by
+  the agent that created it — which would break the product: `resume`
+  and `refine` exist precisely to reach an exploration from a LATER run,
+  and every later run is a different agent instance. So phosphene keys
+  on `exploration_id` alone and treats it as an unguessable capability:
+  the viewer mints it with `crypto.randomUUID()` (v4, 122 bits), and
+  holding one is what grants read and write. Anyone who has the id has
+  the exploration; nobody can guess one. If you copy this pattern, make
+  sure your ids are random — a sequential or caller-chosen id turns this
+  same table into a free-for-all.
 - **`sqlx::query`, not the `sqlx::query!` macro.** The macro validates
   SQL against a live database at COMPILE time, which would make your
   plugin unbuildable without one. The database it will talk to does not

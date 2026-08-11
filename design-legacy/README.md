@@ -4,7 +4,7 @@ Design source-of-truth for the Phosphene app. Phosphene is *design iteration wit
 a swarm of vision agents generates design directions and ranks them against your taste —
 closing the gap between generating and evaluating.
 
-**Figma:** https://www.figma.com/design/4NqOH4jScHXMGw8JZ0LbKP — owner `mgore@aum.edu`.
+**Figma:** https://www.figma.com/design/4NqOH4jScHXMGw8JZ0LbKP (access-controlled).
 
 ## Direction — the chat concept
 

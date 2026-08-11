@@ -1521,6 +1521,17 @@ struct Plugin;
 
 /// One guard for all DDL — created on first use; a plugin container has
 /// nowhere to run a migration.
+///
+/// ACCESS MODEL, deliberate: rows are keyed by `exploration_id` alone and NOT
+/// scoped by `identity().agent_instance_hierarchy`, which is what `mcp/README.md`
+/// otherwise tells plugin authors to do. Scoping by agent would make an
+/// exploration readable only by the agent that made it, and that is exactly
+/// what `resume` and `refine` must cross — every later run is a different
+/// agent instance. So the id IS the capability: the viewer mints it with
+/// `crypto.randomUUID()` (v4, 122 bits of entropy), holding one grants read
+/// and write, and guessing one is not a threat model. The database is shared
+/// with every other plugin, so this is a real decision rather than an
+/// oversight — see `mcp/README.md`.
 static TABLES: OnceCell<()> = OnceCell::const_new();
 
 const CREATE_TABLES: &str = r#"
