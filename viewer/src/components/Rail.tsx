@@ -242,6 +242,27 @@ export default function Rail({
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const historyRef = useRef<HTMLDetailsElement | null>(null);
 
+  // The history popover only ever closed by PICKING something from it, so
+  // clicking anywhere else left it open — over the board, and (before the
+  // z-index fix) over the full-screen zoom modal.
+  useEffect(() => {
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      const details = historyRef.current;
+      if (!details?.hasAttribute("open")) return;
+      if (e instanceof KeyboardEvent) {
+        if (e.key === "Escape") details.removeAttribute("open");
+        return;
+      }
+      if (!details.contains(e.target as Node)) details.removeAttribute("open");
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, []);
+
   // Follow the conversation only when already reading the tail — never yank
   // the scroll away from someone reading an earlier turn.
   const activityCount = turns.reduce(
