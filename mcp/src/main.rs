@@ -485,6 +485,8 @@ pub struct Facts {
     pub fonts_embedded: Vec<String>,
     /// Inline `<svg>` elements across the states — drawn matter, measured.
     pub svg_used: u32,
+    /// What the layout is MADE of. See [`CompositionFacts`].
+    pub composition: CompositionFacts,
     /// `<script` never appears (the sandbox enforces it; this reports it).
     pub javascript_free: bool,
     /// No `src=`/`href=`/`url(` pointing at http(s). The xmlns URI is exempt.
@@ -511,6 +513,41 @@ pub struct PaletteFacts {
     /// written as rgb()/named escape this net — an approximation, and labelled
     /// as one.
     pub adherence: f64,
+}
+
+/// What the layout is MADE of — the compositional vocabulary a direction
+/// actually reaches for, counted across its states.
+///
+/// This measures VOCABULARY, not quality. A grid is not better than a flex
+/// column, and a high `off_axis` is not good taste. The claim it supports is
+/// narrower and stronger: **three directions that return the same numbers here
+/// are not contrasting compositions, whatever their palettes say.** Measured
+/// 2026-08-10 across 18 stored boards from two runs — every one of them
+/// flex-only, zero grid on either side, before and after the font kit. The
+/// material changed; the composition never did, and nothing in the pipeline
+/// was looking.
+///
+/// Counted from the markup, so these are lower bounds: a layout built in a
+/// shorthand we do not grep for reads as absent. Treat a zero as "not found",
+/// not as "definitely absent".
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct CompositionFacts {
+    /// `display:grid` / `grid-template` — two-dimensional placement.
+    pub grid: u32,
+    /// `display:flex` — the default, and the thing every board already does.
+    pub flex: u32,
+    /// `position:absolute` / `fixed` — deliberate placement, overlap, layering.
+    pub placed: u32,
+    /// `rotate()` / `skew()` — anything off the orthogonal.
+    pub off_axis: u32,
+    /// `column-count` / `columns:` — editorial multi-column text.
+    pub columns: u32,
+    /// Inline `<svg>` — drawn matter rather than tinted boxes.
+    pub drawn: u32,
+    /// How many DISTINCT devices above appear at all, out of six. A direction
+    /// scoring 1 is a single-idea layout; a set of directions that all score
+    /// the same 1 is the formulaic failure, stated as a number.
+    pub vocabulary: u32,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -1266,6 +1303,41 @@ fn hex_occurrences(html: &str) -> std::collections::HashMap<String, u32> {
     out
 }
 
+/// Count the compositional devices in already-lowercased markup.
+///
+/// Whitespace-tolerant on the `property: value` pairs because models write
+/// both `display:grid` and `display: grid`; a naive contains() misses half the
+/// real documents and would report a grid-using board as flex-only.
+fn compute_composition(lower: &str, svg_used: u32) -> CompositionFacts {
+    // `display : grid` with arbitrary spacing, without pulling in a regex dep.
+    let count_decl = |property: &str, value: &str| -> u32 {
+        lower
+            .match_indices(property)
+            .filter(|(i, _)| {
+                let rest = lower[i + property.len()..].trim_start();
+                let Some(rest) = rest.strip_prefix(':') else {
+                    return false;
+                };
+                rest.trim_start().starts_with(value)
+            })
+            .count() as u32
+    };
+
+    let grid = count_decl("display", "grid") + lower.matches("grid-template").count() as u32;
+    let flex = count_decl("display", "flex");
+    let placed = count_decl("position", "absolute") + count_decl("position", "fixed");
+    let off_axis = lower.matches("rotate(").count() as u32 + lower.matches("skew(").count() as u32;
+    let columns = lower.matches("column-count").count() as u32 + count_decl("columns", "");
+    let drawn = svg_used;
+
+    let vocabulary = [grid, flex, placed, off_axis, columns, drawn]
+        .iter()
+        .filter(|n| **n > 0)
+        .count() as u32;
+
+    CompositionFacts { grid, flex, placed, off_axis, columns, drawn, vocabulary }
+}
+
 fn compute_facts(direction: &Direction, artboards: &[(String, String)]) -> Facts {
     let p = |i: usize| direction.palette.get(i).map(String::as_str).unwrap_or("");
     let (bg, surface, accent, text, muted) = (p(0), p(1), p(2), p(3), p(4));
@@ -1326,6 +1398,7 @@ fn compute_facts(direction: &Direction, artboards: &[(String, String)]) -> Facts
 
     // Drawn matter, counted — the unboxing's other material.
     let svg_used = lower.matches("<svg").count() as u32;
+    let composition = compute_composition(&lower, svg_used);
 
     // The required xmlns URI is `xmlns="http…"` — none of these needles match
     // it, so compliant documents pass without an exemption list.
@@ -1344,6 +1417,7 @@ fn compute_facts(direction: &Direction, artboards: &[(String, String)]) -> Facts
         fonts_declared_used,
         fonts_embedded,
         svg_used,
+        composition,
         javascript_free: !lower.contains("<script"),
         external_free,
     }
@@ -1567,6 +1641,56 @@ mod no_fabrication_tests {
 #[cfg(test)]
 mod facts_tests {
     use super::*;
+
+    #[test]
+    fn composition_counts_both_spacings_models_actually_write() {
+        // The reason this is not a contains(): real documents use both, and
+        // missing one halves every count.
+        let c = compute_composition("display:grid; display: grid; display :grid", 0);
+        assert_eq!(c.grid, 3);
+        let f = compute_composition("display:flex;display: flex", 0);
+        assert_eq!(f.flex, 2);
+    }
+
+    #[test]
+    fn composition_names_the_flex_only_signature() {
+        // The exact shape measured across all 18 stored boards: flex, nothing
+        // else. vocabulary == 1 is the number that says "one idea".
+        let c = compute_composition("display:flex; display: flex; display:flex", 0);
+        assert_eq!(c.flex, 3);
+        assert_eq!(c.grid, 0);
+        assert_eq!(c.placed, 0);
+        assert_eq!(c.vocabulary, 1, "flex alone is a single-device layout");
+    }
+
+    #[test]
+    fn composition_vocabulary_counts_devices_not_occurrences() {
+        // 40 flex declarations are still ONE idea; one grid plus one rotate is
+        // two. Vocabulary must not reward repetition.
+        let many = "display:flex;".repeat(40);
+        assert_eq!(compute_composition(&many, 0).vocabulary, 1);
+        let varied = compute_composition("display:grid; transform:rotate(3deg);", 2);
+        assert_eq!(varied.grid, 1);
+        assert_eq!(varied.off_axis, 1);
+        assert_eq!(varied.drawn, 2);
+        assert_eq!(varied.vocabulary, 3);
+    }
+
+    #[test]
+    fn composition_does_not_mistake_a_word_for_a_declaration() {
+        // Prose in a <p> naming these words is not a layout decision.
+        let c = compute_composition("<p>a flexible grid of positioned stalls</p>", 0);
+        assert_eq!(c.grid, 0);
+        assert_eq!(c.flex, 0);
+        assert_eq!(c.placed, 0);
+        assert_eq!(c.vocabulary, 0);
+    }
+
+    #[test]
+    fn composition_sees_grid_template_shorthand() {
+        let c = compute_composition("grid-template-columns: repeat(3, 1fr);", 0);
+        assert!(c.grid > 0, "a grid declared only by its template still counts");
+    }
 
     #[test]
     fn contrast_hits_wcag_reference_points() {
@@ -2370,3 +2494,4 @@ async fn main() -> Result<Infallible, std::io::Error> {
     )
     .await
 }
+
