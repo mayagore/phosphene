@@ -249,9 +249,16 @@ fn render_system_prompt(states: &[String], label: &str, anchor_html: Option<&str
          (views/screens/compositions) per direction, using these EXACT labels shared \
          across every direction so results compare side by side: {labels}. Generate \
          ONLY the \"{label}\" state now — the other states are generated separately. \
-         {consistency}\n\nKeep planning brief — put the design effort into the HTML \
-         itself, not extended deliberation.\n\n{requirements}\n\nRespond with a JSON \
-         object: {{\"label\": \"{label}\", \"html\": \"...\"}}."
+         {consistency}\n\nBUILD THE COMPOSITION THE DIRECTION COMMITS TO. Its named \
+         layout strategy is a decision that has already been made; execute it rather \
+         than reaching for the arrangement you would default to. The default — one \
+         centred vertical stack of header, then search row, then a list of cards, \
+         every screen the same — is what makes generated design look generated, and \
+         it is the thing this direction was written to avoid. Place things: let \
+         something run to the edges, let something overlap, let the grid break where \
+         the direction says it should.\n\nKeep planning brief — put the design effort \
+         into the HTML itself, not extended deliberation.\n\n{requirements}\n\nRespond \
+         with a JSON object: {{\"label\": \"{label}\", \"html\": \"...\"}}."
     )
 }
 
@@ -1139,15 +1146,16 @@ fn families_line(direction: &Direction) -> String {
 /// produces exactly as much of it as the direction carries.
 fn moodboard_lines(direction: &Direction) -> String {
     let mut out = String::new();
-    // Composition leads. It is the decision the renderer is most likely to
-    // ignore in favour of its prior, so it is stated first and as an
-    // instruction rather than as flavour.
+    // Composition leads, and is phrased as a COMMITMENT rather than as an
+    // order — these lines go to the judge as well as the renderer, and a
+    // judge's copy must read as the claim it is checking, not as an
+    // instruction it was never given. The imperative ("not a centred vertical
+    // stack") lives in the render system prompt, where only the renderer
+    // sees it.
     if let Some(c) = &direction.composition {
-        out.push_str(&format!(
-            "\nCOMPOSITION — build the screen this way, not as a centred vertical stack: {c}"
-        ));
+        out.push_str(&format!("\nComposition — this direction commits to: {c}"));
         if let Some(note) = &direction.composition_note {
-            out.push_str(&format!("\nHow this direction arranges it: {note}"));
+            out.push_str(&format!("\nHow it arranges the screen: {note}"));
         }
     }
     if let Some(v) = &direction.voice {
@@ -1247,7 +1255,12 @@ fn judge_system_prompt() -> String {
      - craft: is it well made? Visual hierarchy, spacing rhythm, typographic \
      discipline, colour usage, drawn detail.\n\
      - distinctiveness: is this genuinely its own direction, or a generic \
-     template with the palette swapped?\n\
+     template with the palette swapped? Judge the ARRANGEMENT, not only the \
+     colour and type: what is placed where, what overlaps, what runs to the \
+     edge, what breaks alignment. A design whose every screen is one centred \
+     vertical stack of header, search row and list is a generic template no \
+     matter how distinctive its palette. If the direction declares a layout \
+     strategy, say plainly whether the markup delivers it.\n\
      - fitness: does it serve THIS brief specifically, or would it suit any \
      brief? Judge against the brief text you are given.\n\
      - coherence: do the states read as one product? Same chrome, same spacing \
