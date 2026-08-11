@@ -521,6 +521,29 @@ fn internal(message: impl Into<String>) -> rmcp::ErrorData {
 // reads as a table of what differs between invention, generation and judging.
 // A params struct would hide exactly that comparison.
 #[allow(clippy::too_many_arguments)]
+/// Translate a spawn failure into something the person reading it can act on.
+///
+/// The platform reports a lapsed Claude Code login as the literal string
+/// "Claude Code returned an error result: success" — the runner surfaces the
+/// result *subtype* rather than the 401. It is upstream's bug and cannot be
+/// fixed here, but it is also the FIRST failure anyone who is not the author
+/// hits, and a message containing the word "success" sends them looking
+/// anywhere but at their login. So phosphene absorbs it.
+fn spawn_error(upstream: Upstream, error: impl std::fmt::Display) -> rmcp::ErrorData {
+    let raw = error.to_string();
+    let lapsed_login = raw.contains("Claude Code returned an error result")
+        || (raw.contains("error result") && raw.contains("success"));
+    if lapsed_login && matches!(upstream, Upstream::ClaudeAgentSdk) {
+        return internal(format!(
+            "the daemon host's Claude Code login is not usable — run `claude` there and \
+             sign in, then retry. (The platform reports this as \"{raw}\", which is the \
+             result subtype rather than the auth error; it does not mean the call \
+             succeeded.)"
+        ));
+    }
+    internal(format!("agents spawn: {raw}"))
+}
+
 async fn run_agent(
     system: &str,
     user: &str,
@@ -587,7 +610,7 @@ async fn run_agent(
         None,
     )
     .await
-    .map_err(|error| internal(format!("agents spawn: {error}")))?;
+    .map_err(|error| spawn_error(upstream, error))?;
     let mut stream = std::pin::pin!(stream);
 
     // Assistant `content` arrives as DELTAS, accumulated by `index`.
@@ -598,7 +621,7 @@ async fn run_agent(
             .await
             .map_err(|_| internal(format!("the agent went silent for {}s", STALL.as_secs())))?;
         let Some(item) = next else { break };
-        let item = item.map_err(|error| internal(format!("agents spawn: {error}")))?;
+        let item = item.map_err(|error| spawn_error(upstream, error))?;
 
         // The first item is a bare id string; the rest are completion chunks.
         let spawn::ResponseItem::Chunk(chunk) = item else {
@@ -1347,6 +1370,24 @@ mod no_fabrication_tests {
         });
         let err = normalize_invention(&parsed).expect_err("one bad direction fails the set");
         assert!(err.contains("direction 1"), "names which one: {err}");
+    }
+
+    #[test]
+    fn a_lapsed_claude_login_stops_saying_success() {
+        let raw = "Claude Code returned an error result: success";
+        let msg = format!("{:?}", spawn_error(Upstream::ClaudeAgentSdk, raw));
+        assert!(msg.contains("login is not usable"), "{msg}");
+        assert!(msg.contains("run `claude`"), "actionable: {msg}");
+        // On openrouter the same string means nothing — do not mistranslate.
+        let other = format!("{:?}", spawn_error(Upstream::OpenRouter, raw));
+        assert!(other.contains("agents spawn:"), "{other}");
+        assert!(!other.contains("login is not usable"));
+    }
+
+    #[test]
+    fn an_ordinary_spawn_error_is_passed_through() {
+        let msg = format!("{:?}", spawn_error(Upstream::ClaudeAgentSdk, "connection refused"));
+        assert!(msg.contains("agents spawn: connection refused"), "{msg}");
     }
 
     #[test]
