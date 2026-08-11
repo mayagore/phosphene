@@ -677,6 +677,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
               ? "connecting to the daemon…"
               : undefined
         }
+        inventionError={exploration?.inventionError}
         zoomed={zoomed}
         onOpen={(directionIndex, label) => {
           const cell = cells[cellKey(directionIndex, label)];

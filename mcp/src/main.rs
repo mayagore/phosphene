@@ -137,6 +137,12 @@ const MAX_ANCHOR_CHARS: usize = 48_000;
 // keyed by slot and crashed the old app; and `states` are chosen per brief
 // and SHARED across directions, which is what makes a comparison grid
 // meaningful instead of a mosaic.
+//
+// The closing REQUIRED clause states the real consequence, because there is
+// no longer a safety net underneath it: `normalize_direction` rejects a
+// direction missing a palette or a type choice rather than inventing one.
+// Note the example palette is still an example — it is safe to keep now that
+// nothing substitutes it silently when a model declines to answer.
 
 const INVENT_PROMPT: &str = r##"You are a senior design director exploring visual directions for a design brief. Generate exactly 3 directions that are genuinely different from each other — not variations on one theme, but contrasting approaches in mood, visual weight, cultural reference, or era.
 
@@ -155,6 +161,8 @@ For each direction provide:
 - audience: one sentence on who this direction is FOR — their taste, their context
 
 Also provide "states": a JSON array of exactly 3 state names (views/screens/compositions) that make sense for this brief — a fintech app might get ["landing", "portfolio", "transactions"]; a concert poster might get ["announce", "lineup", "tickets"]. These are SHARED across all directions: every direction will render exactly these 3 states so they can be compared side by side. Do not default to "hero/dashboard/settings" unless those genuinely fit.
+
+`palette` and `typography` are REQUIRED on every direction and are not filled in for you: a direction missing either is rejected and the whole invention fails, so give all 3 directions a full 5-colour array and a type description rather than leaving one thin.
 
 Respond with a JSON object: {"directions": [...], "states": ["...", "...", "..."]}."##;
 
@@ -813,8 +821,8 @@ fn extract_html(text: &str, label: &str) -> Result<String, String> {
     }
 }
 
-/// Normalize one direction, defaulting rather than failing — a malformed
-/// field should cost that field, not the whole run.
+/// Normalize one direction. Optional flavour defaults; the DESIGN DECISIONS
+/// do not — see `normalize_direction`.
 fn opt_field(raw: &serde_json::Value, key: &str) -> Option<String> {
     raw.get(key)
         .and_then(|value| value.as_str())
@@ -823,9 +831,21 @@ fn opt_field(raw: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn normalize_direction(raw: &serde_json::Value, index: usize) -> Direction {
+/// NO FABRICATED DESIGN DECISIONS. A palette and a type choice are the
+/// direction — if the model did not make them, phosphene does not make them
+/// on its behalf and call the result a direction.
+///
+/// This used to substitute a FALLBACK palette that was byte-for-byte the
+/// example in `INVENT_PROMPT`, unflagged, and `compute_facts` then measured
+/// "palette adherence" against colours no model ever chose. The same lie had
+/// a twin in `viewer/src/lib/directions.ts`. Both are gone: a direction
+/// missing either decision is an error naming the direction and the field.
+///
+/// Flavour (name, description, mood, voice, texture, motifs, audience) still
+/// defaults — those are labels and prose, not decisions, and a missing one
+/// costs that field rather than the run.
+fn normalize_direction(raw: &serde_json::Value, index: usize) -> Result<Direction, String> {
     const SLOTS: [&str; 5] = ["background", "surface", "accent", "text", "muted"];
-    const FALLBACK: [&str; 5] = ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"];
 
     let palette: Vec<String> = match raw.get("palette") {
         Some(serde_json::Value::Array(items)) => items
@@ -847,21 +867,39 @@ fn normalize_direction(raw: &serde_json::Value, index: usize) -> Direction {
             .to_string()
     };
 
-    Direction {
-        name: match raw.get("name").and_then(|value| value.as_str()) {
-            Some(name) => name.to_string(),
-            None => format!("Direction {}", index + 1),
-        },
+    let name = match raw.get("name").and_then(|value| value.as_str()) {
+        Some(name) => name.to_string(),
+        None => format!("Direction {}", index + 1),
+    };
+
+    if palette.len() != 5 {
+        return Err(format!(
+            "direction {} (\"{name}\") returned {} usable palette colours, not 5 — \
+             phosphene will not invent the rest. Expected an array of 5 hex strings \
+             in slot order (background, surface, accent, text, muted), or an object \
+             keyed by those slot names.",
+            index, palette.len()
+        ));
+    }
+
+    // A silent "system-ui, sans-serif" here would quietly undo the font kit for
+    // that direction — the exact system-stack look E1 shipped to escape.
+    let typography = match raw.get("typography").and_then(|value| value.as_str()) {
+        Some(typography) if !typography.trim().is_empty() => typography.to_string(),
+        _ => {
+            return Err(format!(
+                "direction {index} (\"{name}\") returned no typography — phosphene \
+                 will not substitute a system font stack. Expected a font-family \
+                 string."
+            ))
+        }
+    };
+
+    Ok(Direction {
+        name,
         description: field("description"),
-        palette: if palette.len() == 5 {
-            palette
-        } else {
-            FALLBACK.iter().map(|hex| (*hex).to_string()).collect()
-        },
-        typography: match raw.get("typography").and_then(|value| value.as_str()) {
-            Some(typography) => typography.to_string(),
-            None => "system-ui, sans-serif".to_string(),
-        },
+        palette,
+        typography,
         families: raw
             .get("families")
             .and_then(|value| value.as_array())
@@ -879,7 +917,7 @@ fn normalize_direction(raw: &serde_json::Value, index: usize) -> Direction {
         texture: opt_field(raw, "texture"),
         motifs: opt_field(raw, "motifs"),
         audience: opt_field(raw, "audience"),
-    }
+    })
 }
 
 /// The embedded-families line, wherever a direction is described to a
@@ -920,6 +958,9 @@ fn moodboard_lines(direction: &Direction) -> String {
 }
 
 fn normalize_invention(parsed: &serde_json::Value) -> Result<Invention, String> {
+    // One bad direction fails the invention rather than being dropped: the
+    // whole procedure downstream is a fixed 3x3 grid keyed by direction_index,
+    // so silently returning two directions would desync every render call.
     let directions: Vec<Direction> = parsed
         .get("directions")
         .and_then(|directions| directions.as_array())
@@ -928,8 +969,9 @@ fn normalize_invention(parsed: &serde_json::Value) -> Result<Invention, String> 
                 .iter()
                 .enumerate()
                 .map(|(index, raw)| normalize_direction(raw, index))
-                .collect()
+                .collect::<Result<Vec<_>, _>>()
         })
+        .transpose()?
         .unwrap_or_default();
     if directions.is_empty() {
         return Err("the model returned no directions".to_string());
@@ -1209,6 +1251,113 @@ mod lean_rendered_tests {
         assert!(lean.html.contains("base64,ELIDED"));
         assert!(fonts::embedded_families(&lean.html).is_empty());
         assert!((lean.html.len() as u64) < lean.bytes_stored / 2);
+    }
+}
+
+/// The no-fabrication rule, which is a product decision and not an
+/// implementation detail: if a model did not make a design decision,
+/// phosphene does not make it on the model's behalf. These exist so the
+/// FALLBACK palette cannot quietly come back.
+#[cfg(test)]
+mod no_fabrication_tests {
+    use super::*;
+
+    fn good() -> serde_json::Value {
+        serde_json::json!({
+            "name": "Ink Lantern",
+            "description": "warm paper, cold ink",
+            "palette": ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"],
+            "typography": "Fraunces, serif",
+            "mood": "quiet"
+        })
+    }
+
+    #[test]
+    fn a_complete_direction_is_accepted_verbatim() {
+        let d = normalize_direction(&good(), 0).expect("complete direction");
+        assert_eq!(d.name, "Ink Lantern");
+        assert_eq!(d.palette.len(), 5);
+        assert_eq!(d.palette[2], "#ff6a3d");
+        assert_eq!(d.typography, "Fraunces, serif");
+    }
+
+    #[test]
+    fn a_slot_keyed_palette_object_still_works() {
+        let mut raw = good();
+        raw["palette"] = serde_json::json!({
+            "background": "#101418", "surface": "#1b2129", "accent": "#ff6a3d",
+            "text": "#f2f2f2", "muted": "#7c8798"
+        });
+        let d = normalize_direction(&raw, 0).expect("slot-keyed palette");
+        assert_eq!(d.palette.len(), 5);
+    }
+
+    #[test]
+    fn a_short_palette_fails_instead_of_being_filled_in() {
+        let mut raw = good();
+        raw["palette"] = serde_json::json!(["#101418", "#1b2129"]);
+        let err = normalize_direction(&raw, 1).expect_err("must not invent colours");
+        assert!(err.contains("2 usable palette colours"), "{err}");
+        assert!(err.contains("Ink Lantern"), "names the direction: {err}");
+    }
+
+    #[test]
+    fn a_missing_palette_fails_instead_of_being_filled_in() {
+        let mut raw = good();
+        raw.as_object_mut().unwrap().remove("palette");
+        assert!(normalize_direction(&raw, 0).is_err());
+    }
+
+    #[test]
+    fn missing_typography_fails_instead_of_defaulting_to_a_system_stack() {
+        let mut raw = good();
+        raw.as_object_mut().unwrap().remove("typography");
+        let err = normalize_direction(&raw, 2).expect_err("must not invent type");
+        assert!(err.contains("no typography"), "{err}");
+        // The whole point of E1: never silently return to system-ui.
+        assert!(!err.contains("system-ui"));
+    }
+
+    #[test]
+    fn blank_typography_is_treated_as_missing() {
+        let mut raw = good();
+        raw["typography"] = serde_json::json!("   ");
+        assert!(normalize_direction(&raw, 0).is_err());
+    }
+
+    #[test]
+    fn flavour_still_defaults_a_missing_name_is_not_a_failure() {
+        let mut raw = good();
+        raw.as_object_mut().unwrap().remove("name");
+        raw.as_object_mut().unwrap().remove("mood");
+        let d = normalize_direction(&raw, 4).expect("flavour is not a design decision");
+        assert_eq!(d.name, "Direction 5");
+        assert_eq!(d.mood, "");
+    }
+
+    #[test]
+    fn one_bad_direction_fails_the_whole_invention() {
+        // Dropping it instead would desync the fixed 3x3 grid, which is keyed
+        // by direction_index on every downstream render call.
+        let mut bad = good();
+        bad["palette"] = serde_json::json!([]);
+        let parsed = serde_json::json!({
+            "directions": [good(), bad, good()],
+            "states": ["home", "detail", "empty"]
+        });
+        let err = normalize_invention(&parsed).expect_err("one bad direction fails the set");
+        assert!(err.contains("direction 1"), "names which one: {err}");
+    }
+
+    #[test]
+    fn a_whole_good_invention_passes() {
+        let parsed = serde_json::json!({
+            "directions": [good(), good(), good()],
+            "states": ["home", "detail", "empty"]
+        });
+        let inv = normalize_invention(&parsed).expect("all directions complete");
+        assert_eq!(inv.directions.len(), 3);
+        assert_eq!(inv.states.len(), 3);
     }
 }
 
@@ -1639,19 +1788,16 @@ impl Plugin {
             _ => None, // the anchor itself renders unpinned
         };
 
+        // Zipped, not indexed-with-a-default: the old `unwrap_or("#000000")`
+        // padded a short palette with black and told the renderer it was the
+        // direction's colour. `normalize_direction` now guarantees five, so a
+        // short palette cannot reach here — and if one ever does, it renders
+        // as fewer swatches rather than as invented ones.
         let slots = ["bg", "surface", "accent", "text", "muted"];
         let swatches = slots
             .iter()
-            .enumerate()
-            .map(|(index, slot)| {
-                let hex = args
-                    .direction
-                    .palette
-                    .get(index)
-                    .map(String::as_str)
-                    .unwrap_or("#000000");
-                format!("{slot}={hex}")
-            })
+            .zip(args.direction.palette.iter())
+            .map(|(slot, hex)| format!("{slot}={hex}"))
             .collect::<Vec<_>>()
             .join(", ");
 

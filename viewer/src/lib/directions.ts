@@ -31,10 +31,14 @@ export interface Invention {
   states: string[];
 }
 
-const FALLBACK_PALETTE = ["#101418", "#1b2129", "#ff6a3d", "#f2f2f2", "#7c8798"];
-
-/** Normalize one direction, defaulting rather than throwing — a malformed
- * field should cost that field, not the whole run. */
+/** Normalize one direction. Flavour defaults; DESIGN DECISIONS do not.
+ *
+ * This used to substitute a FALLBACK_PALETTE — byte-for-byte the example in
+ * the MCP half's invent prompt — and a "system-ui, sans-serif" type stack,
+ * both unflagged. The user saw colours and type no model chose, and the facts
+ * then measured "adherence" against them. The MCP half's twin
+ * (`normalize_direction`) is gone too; this is the display-side half of the
+ * same rule: if nothing generated, show the failure, not a fake. */
 function normalizeDirection(raw: unknown, index: number): Direction {
   const d = (raw ?? {}) as Record<string, unknown>;
   const palette = Array.isArray(d.palette)
@@ -46,11 +50,26 @@ function normalizeDirection(raw: unknown, index: number): Direction {
           .map((k) => (d.palette as Record<string, unknown>)[k])
           .filter((c): c is string => typeof c === "string")
       : [];
+  const name = typeof d.name === "string" ? d.name : `Direction ${index + 1}`;
+  if (palette.length !== 5) {
+    throw new Error(
+      `direction ${index} ("${name}") returned ${palette.length} usable palette colours, not 5 — ` +
+        `phosphene will not invent the rest.`,
+    );
+  }
+  const typography =
+    typeof d.typography === "string" && d.typography.trim() ? d.typography : "";
+  if (!typography) {
+    throw new Error(
+      `direction ${index} ("${name}") returned no typography — phosphene will not ` +
+        `substitute a system font stack.`,
+    );
+  }
   return {
-    name: typeof d.name === "string" ? d.name : `Direction ${index + 1}`,
+    name,
     description: typeof d.description === "string" ? d.description : "",
-    palette: palette.length === 5 ? palette : FALLBACK_PALETTE,
-    typography: typeof d.typography === "string" ? d.typography : "system-ui, sans-serif",
+    palette,
+    typography,
     families: Array.isArray(d.families)
       ? d.families.filter((f): f is string => typeof f === "string" && f.trim().length > 0)
       : undefined,

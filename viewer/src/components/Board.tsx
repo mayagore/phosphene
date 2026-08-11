@@ -52,6 +52,10 @@ interface BoardProps {
   onSelect: (selection: BoardSelection) => void;
   /** Idle empty-state gate line (daemon state, in calm words). */
   gateNote?: string;
+  /** Why there is no board, when the reason is a failure rather than "not
+   * started". Replaces the invitation — telling someone to "start exploring"
+   * after their run died is the blank-board lie. */
+  inventionError?: string;
   zoomed: Zoomed | null;
   onOpen: (directionIndex: number, label: string) => void;
   onCloseZoom: () => void;
@@ -239,6 +243,7 @@ export default function Board({
   selection,
   onSelect,
   gateNote,
+  inventionError,
   zoomed,
   onOpen,
   onCloseZoom,
@@ -369,17 +374,47 @@ export default function Board({
 
       {!invention && (
         <div className="ph-center-scroll">
-          <div className="ph-board-empty">
+          {inventionError ? (
+            <div className="ph-board-empty ph-board-empty--failed" role="alert">
+              <span className="ph-turn-mark" aria-hidden="true">
+                ⚠
+              </span>
+              <strong>No directions to show</strong>
+              <p>{inventionError}</p>
+              <p className="ph-board-gate">
+                Phosphene does not invent a palette or a type stack on a model's behalf, so there is
+                nothing to render. Try the brief again.
+              </p>
+            </div>
+          ) : (
+            <div className="ph-board-empty">
+              <span className="ph-turn-mark" aria-hidden="true">
+                ✦
+              </span>
+              <strong>Start exploring</strong>
+              <p>
+                Describe a brief in the rail. Independent agents invent contrasting directions and
+                render each across shared states — name judge models and their judgment appears
+                beside the board.
+              </p>
+              {gateNote && <p className="ph-board-gate">{gateNote}</p>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {invention && invention.states.length === 0 && (
+        <div className="ph-center-scroll">
+          <div className="ph-board-empty ph-board-empty--failed" role="alert">
             <span className="ph-turn-mark" aria-hidden="true">
-              ✦
+              ⚠
             </span>
-            <strong>Start exploring</strong>
+            <strong>Directions, but no states to render them across</strong>
             <p>
-              Describe a brief in the rail. Independent agents invent contrasting directions and
-              render each across shared states — name judge models and their judgment appears
-              beside the board.
+              The invention returned {invention.directions.length} direction
+              {invention.directions.length === 1 ? "" : "s"} and zero shared states, so the grid has
+              no columns. Nothing was rendered.
             </p>
-            {gateNote && <p className="ph-board-gate">{gateNote}</p>}
           </div>
         </div>
       )}

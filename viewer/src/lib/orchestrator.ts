@@ -88,6 +88,10 @@ export interface Exploration {
   /** Judges that died, kept VISIBLE — a silently missing verdict reads as
    * "never judged", which is a lie (review 01, H2). */
   judgeFailures: JudgeFailure[];
+  /** Why the invention could not be read, when it could not. Kept VISIBLE for
+   * the same reason as `judgeFailures`: a run that produced nothing and says
+   * nothing reads as "not started yet", which is a lie. */
+  inventionError?: string;
   /** The agent's closing prose. */
   summary?: string;
   tools: ToolEvent[];
@@ -133,9 +137,15 @@ export function deriveExploration(tools: ToolEvent[], summary?: string): Explora
       if (event.result) {
         try {
           out.invention = normalizeInvention(JSON.parse(event.result));
-        } catch {
-          // A malformed invention result will surface as the run failing to
-          // produce directions — not silently as an empty board.
+          out.inventionError = undefined;
+        } catch (error) {
+          // Recorded, not swallowed. The old comment here claimed this would
+          // "surface as the run failing to produce directions" — it did not:
+          // if the invention was the only bad result the agent could stop
+          // cleanly and the user got a completed run over a blank board that
+          // still said "Start exploring".
+          out.inventionError =
+            error instanceof Error ? error.message : "the invention result could not be read";
         }
       }
       continue;

@@ -751,6 +751,13 @@
   color: var(--ph-color-text-muted);
 }
 
+/* A run that produced nothing is not an invitation to start. Same shape as
+ * the empty state, read as a failure — the mark carries the tone so the
+ * message can stay in plain words. */
+.ph-board-empty--failed .ph-turn-mark {
+  color: var(--ph-color-score-low);
+}
+
 /* ── The canvas ───────────────────────────────────────────────────────────
  * A single stage carries every shape and header; pan and zoom are ONE
  * transform on the stage. Shapes sit at true 400×720 in canvas units, so
