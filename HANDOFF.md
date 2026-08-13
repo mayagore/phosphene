@@ -1,6 +1,6 @@
 # Phosphene rebuild — handoff
 
-**Status: building, 2026-08-11.** The plugin is done and running — both halves,
+**Status: building, 2026-08-13.** The plugin is done and running — both halves,
 end to end. What is live is the **expressiveness plan**: E1 shipped and was
 RULED AGAINST, and the composition work is the answer to that ruling. Skip to
 [Next action](#next-action) for the current list; everything between here and
@@ -91,7 +91,7 @@ broadly right, but §6.3 is now superseded — see below.
 | Phase 3 — standards + CI (§7) | **Done** — `pnpm run verify`, `.github/workflows/ci.yml`, CI green |
 | Phase 4 — build (§8) | **Done 2026-08-04** — two-halves plugin, five MCP tools, postgres on |
 | Phase 5 — the UI (chat concept → canvas) | **Done 2026-08-05** — `50ef1b7`…`0c143bc` |
-| Phase 6 — expressiveness (E1–E4) | **E1 shipped, awaiting Maya's A/B verdict** — see Next action |
+| Phase 6 — expressiveness (E1–E4) | **E1 ruled against 2026-08-10; composition + E2 shipped in response. E3/E4 open** — see Next action |
 
 ## The §6 decisions, as made
 
@@ -510,7 +510,7 @@ What follows is not the build. It is the product problem the build exposed.
 
 ### 1. E1 was RULED AGAINST. Composition is the answer. — 2026-08-10
 
-> **Corrected 2026-08-11.** This section previously read "WAITING ON MAYA — the
+> **Corrected 2026-08-13.** This section previously read "WAITING ON MAYA — the
 > E1 A/B verdict. It gates everything in §2," and said nothing in §2 could start
 > until she ruled. She ruled on 2026-08-10. Do not re-send that A/B.
 
@@ -596,7 +596,7 @@ without an A/B on an unchanged brief.
 
 ### 4. Owed to other people
 
-> **Corrected 2026-08-11.** Both items in this section were wrong. The first
+> **Corrected 2026-08-13.** Both items in this section were wrong. The first
 > read "OpenRouter key rotation is STILL unconfirmed — treat as live until
 > proven otherwise"; the second said the seven findings were HELD and must not
 > be sent. Neither is true any more.
