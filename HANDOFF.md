@@ -1,10 +1,13 @@
 # Phosphene rebuild — handoff
 
-**Status: building, 2026-08-07.** The plugin is done and running — both halves,
-end to end. What is live now is the **expressiveness plan (E1–E4)**, and E1 is
-waiting on Maya's A/B verdict. Skip to [Next action](#next-action) for the
-current list; everything between here and there is settled history, kept because
-it is expensive to rediscover.
+**Status: building, 2026-08-11.** The plugin is done and running — both halves,
+end to end. What is live is the **expressiveness plan**: E1 shipped and was
+RULED AGAINST, and the composition work is the answer to that ruling. Skip to
+[Next action](#next-action) for the current list; everything between here and
+there is settled history, kept because it is expensive to rediscover.
+
+> The operative day-to-day plan is `~/.claude/plans/ancient-bubbling-beacon.md`,
+> not this file. This file is the durable record; that one is the live map.
 
 ## ⚠️ LEAN TRANSIT (2026-08-07) — the board-payload contract
 
@@ -505,32 +508,64 @@ tools → plugin postgres → boards on a pannable canvas that export.
 
 What follows is not the build. It is the product problem the build exposed.
 
-### 1. WAITING ON MAYA — the E1 A/B verdict. It gates everything in §2.
+### 1. E1 was RULED AGAINST. Composition is the answer. — 2026-08-10
+
+> **Corrected 2026-08-11.** This section previously read "WAITING ON MAYA — the
+> E1 A/B verdict. It gates everything in §2," and said nothing in §2 could start
+> until she ruled. She ruled on 2026-08-10. Do not re-send that A/B.
 
 Maya's diagnosis, 2026-08-06, in her own written doc: **the outputs are
 formulaic.** Five causes — the expressive box (prompt-prose bans and no real
 typefaces; "self-contained" was the safety property, "font-less" never was),
 generator monoculture (one hardcoded seat), a conformity-shaped rubric, no
-visual references, and a taste loop that was never run. The approved fix is
-four phases, **each gated on a same-brief A/B judged by Maya's eye.**
+visual references, and a taste loop that was never run.
 
 **E1 (unbox) shipped** — `8d878bd`, `0030c11`, `2b98879`: a woff2 kit inside the
-MCP image, server-side `@font-face` injection, SVG invited, the "contemporary
-baseline" paragraph deleted, `fonts_embedded` / `svg_used` surfaced as facts.
-The A/B rendered 9/9 and went to Maya 2026-08-07 — new `307daa12-…` against old
-`22711796-…`, same night-market-haiku brief, ~86–125KB boards against ~7–11KB.
+MCP image, server-side `@font-face` injection, SVG invited, `fonts_embedded` /
+`svg_used` surfaced as facts. **Her verdict, on the boards:** *"just added some
+rotation and either name or language change — this is not accessibility or
+original designs."*
 
-**Nothing in §2 starts until she rules.** Re-render or re-send runbook: the
-`expressiveness` memory, which also holds the two ops traps that cost a full run
-(the dev image does NOT rebuild on source change — `podman rmi` first; and a
-daemon started outside `scripts/resume.sh` lacks the MCP timeout env).
+**She was right, and the numbers say it more sharply than she did.** Measured
+across all 18 boards of both runs: compositional vocabulary **3.44 before the
+kit, 3.44 after** — identical — and the new side had *zero* grid where the old
+side had it on two boards. E1 bought typography and traded grid for SVG. It did
+not touch composition, because nothing in the pipeline had ever asked a model to
+arrange anything, so every board was the same vertical flex stack.
 
-### 2. Then E2 → E4, in order
+**What shipped in response**, same day:
 
-- **E2 — many hands.** A model seat per direction, replacing the one hardcoded
-  `GENERATION_UPSTREAM`/`MODEL` in `mcp/src/main.rs`. `run_agent` already takes
-  model and upstream per call, so this is roster work, not plumbing. **Maya
-  picks the roster** and the cost envelope (default $1).
+- `CompositionFacts` in `compute_facts` — grid, flex, placed, off-axis, columns,
+  drawn, and `vocabulary`. It measures VOCABULARY, not quality; the claim it
+  supports is that three directions returning the same numbers are not
+  contrasting compositions whatever their palettes say.
+- A direction must now **declare a named layout strategy**, required like the
+  palette, and the three in one invention may not share one. Not a closed enum:
+  six buckets would cap the design space at six.
+- The renderer is told to build it, with the default named as the failure. The
+  judge's `distinctiveness` now judges arrangement and says whether the markup
+  delivers what was declared.
+
+**Result, same brief, third run:** three genuinely different layouts
+(`layered-overlap` / `centred-column` / `diagonal`), each direction's markup
+matching its declaration, `flex` collapsed from 2–18 to 1–8. Vocabulary 4.00.
+
+Ops traps that cost a full run, still live: the dev image does **not** rebuild
+on source change (`podman rmi` first), and a daemon started outside
+`scripts/resume.sh` lacks the MCP timeout env — a bare CLI read can materialize
+one, so check before trusting a render.
+
+### 2. E2 is DONE and measured. E3 and E4 remain.
+
+- **E2 — many hands. SHIPPED and run both ways, 2026-08-10/11.** Seats are
+  declarable per call (`upstream`/`model` on invent/render/refine, defaults
+  unchanged). Two arms on the same brief: **opus/sonnet/haiku** (free, local
+  login) and **gpt-5.6-terra / gemini-2.5-pro / deepseek-v4-pro** (cross-lab,
+  ~$0.60). Seats have real signatures — opus and GPT go maximal in different
+  accents, haiku and gemini restrain differently, deepseek swung widest with
+  both the only 6/6 vocabulary board and the only outright render failure. The
+  composition contract held across every lab that answered. **Seats matter only
+  once composition is open** — before it, three models gave three flex stacks.
 - **E3 — the funnel.** Restore ideate → judge → draft → judge → explore → judge
   → human as stage tools with their own rubrics, human gates default OFF. This
   was in the design and dissolved when functions were retired. It was never
@@ -561,15 +596,33 @@ without an A/B on an unchanged brief.
 
 ### 4. Owed to other people
 
-- 🔴 **OpenRouter key rotation is STILL unconfirmed.** The key behind every judge
-  in this repo's history. Treat as live until proven otherwise.
-- **Seven platform findings for Ronald are written up and HELD** — full list in
-  the `platform-findings` memory. **Maya has not said send. Do not send them.**
-  She said "dont send anything" about the security one specifically (a plugin can
-  read the user's API key via `objectiveai api config objectiveai-authorization`
-  and bypass the daemon; the command lane has no allowlist).
+> **Corrected 2026-08-11.** Both items in this section were wrong. The first
+> read "OpenRouter key rotation is STILL unconfirmed — treat as live until
+> proven otherwise"; the second said the seven findings were HELD and must not
+> be sent. Neither is true any more.
+
+- ✅ **The OpenRouter key was never exposed.** `git log --all -p` finds zero
+  key-shaped matches across the entire history, and Maya read the account
+  activity: every call is her own. The old "treat as live" line was a precaution
+  someone wrote when unsure, and repeating it made it sound like a known leak.
+  **Do not re-raise.** Standing advice that survives it: keep a per-key credit
+  limit, because a readable key is *by design* (below), so a bounded key rather
+  than secrecy is the defence.
+- ✅ **The seven findings were sent, and Ronald answered all of them,
+  2026-08-10.** Three dismissed: the readable API key is **"not an issue"** and
+  intended (plugin trust is consent via his #281 whitelist, not capability
+  limits); killed clients orphaning their spawns is **"actually intended"**; the
+  viewer bundle is "not an issue… find some alternative solution." One shrugged
+  off (`timeout_seconds`). **Three accepted as PRs WE owe him:** raise the MCP
+  timeout, raise the podman VM memory on macOS specifically, propagate the real
+  auth error instead of the result subtype. Session-start docs for each are at
+  `~/.claude/plans/oai-pr-{1,2,3}-*.md`.
+- **His rule before any of those PRs:** `install.sh --from-source`, exercise the
+  fix locally, *then* open it. He reviews personally and he challenged one of
+  our diagnoses already — verify in source before claiming.
 - **The {ai} logo on the viewer app itself** is an upstream contribution, not
   ours — the viewer ships no app bundle and its CFBundleIdentifier is NULL.
+  Ronald: a way for agents to see the viewer is eventually planned, not soon.
 
 ### Standing constraints — from the spikes, still binding
 
