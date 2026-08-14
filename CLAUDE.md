@@ -1,5 +1,28 @@
 # phosphene
 
+## First: find out when "now" is. No document here is dated.
+
+```bash
+git log -5 --format='%h %ad %s' --date=short && git tag -l
+bash scripts/verify-claims.sh      # 26 read-only checks, ~8s
+bash scripts/resume.sh --check     # is a daemon up WITHOUT the MCP env?
+```
+
+The newest commit is the last thing that happened. A document's own date only
+says when someone last edited it, and this file, `HANDOFF.md` and the plan are
+edited at different times by different sessions.
+
+**You may be reading a stale copy of this file.** A session's auto-loaded
+context can predate the working tree. If this file disagrees with `README.md` —
+on the tool list, on anything — `git show HEAD:CLAUDE.md` wins. (Measured: a
+cold session was handed a copy claiming three MCP tools when there are six, and
+would have missed `refine_state` entirely.)
+
+Run `verify-claims.sh` before believing anything below. It is eight seconds and
+cheaper than any assumption it catches.
+
+---
+
 Design exploration and judgment, as an ObjectiveAI plugin.
 
 **Two halves.** Six MCP tools in Rust (`mcp/`) — `invent_directions`,

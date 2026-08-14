@@ -12,6 +12,12 @@ agent use them.
 
 ## Using it
 
+> **⚠️ Nothing is released yet.** There is no tag — `git tag -l` is empty — so
+> the declaration below does not resolve for anyone but a local developer who
+> has registered both halves by hand. Phosphene is in active development on its
+> output quality, and the tag is deliberately uncut. Everything below describes
+> how it will work once one exists.
+
 An agent reaches the tools by declaring the plugin:
 
 ```json

@@ -8,6 +8,11 @@ there is settled history, kept because it is expensive to rediscover.
 
 > The operative day-to-day plan is `~/.claude/plans/ancient-bubbling-beacon.md`,
 > not this file. This file is the durable record; that one is the live map.
+>
+> **GREP THIS FILE FOR A HEADING — never read it top-down.** It is 600+ lines
+> and, by design, retracted claims are left in place as blockquoted
+> corrections (`verify-claims.sh` needs them there). Reading in order means
+> absorbing dead claims before live ones. A cold session hit exactly that.
 
 ## ⚠️ LEAN TRANSIT (2026-08-07) — the board-payload contract
 
