@@ -589,8 +589,14 @@ without an A/B on an unchanged brief.
   every past exploration is unreachable unless you kept the uuid.
 - **Per-round artboard rows.** Renders currently overwrite. One row per round is
   what unlocks undo and diffs.
-- **No tests exist** — not in `viewer/`, not in `mcp/`. `pnpm run verify` is
-  typecheck + build + six contract assertions; `cargo test` covers the tool half.
+- **No tests in `viewer/`** — zero test files, no test runner in `package.json`.
+  `pnpm run verify` is typecheck + build + six contract assertions.
+  **`mcp/` DOES have tests** — 37 of them, `cargo test`, covering fonts, facts
+  arithmetic, score clamping, the no-fabrication rule, composition counting and
+  the double-escape rescue. (This bullet read "No tests exist — not in
+  `viewer/`, not in `mcp/`" while its own next clause said `cargo test` covers
+  the tool half. A cold session caught the contradiction; planning test work off
+  the old wording would have meant rewriting 37 existing tests.)
   Tests for the salvage ladder and a contract test against a live daemon were
   named P2 in `docs/reviews/01-intention.md` and are still open.
 - **CI does not build the MCP half.** `.github/workflows/ci.yml` has `verify`

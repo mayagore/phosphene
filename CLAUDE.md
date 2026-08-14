@@ -68,6 +68,15 @@ podman rmi -f localhost/objectiveai-plugin:mayagore-phosphene-v0.1.0
 `CONTAINERS_HELPER_BINARY_DIR` set to it.) Verify the build is new by grepping
 the run for new-prompt vocabulary, never by the call succeeding.
 
+**`rmi` and `mcp reset` are not alternatives — do both, in this order.** They
+clear different caches: `podman rmi` drops the built image, and
+`objectiveai development plugins mcp reset --owner mayagore --name phosphene
+--version v0.1.0` drops the daemon's registration state that otherwise takes an
+image-exists fast path. Doing only one leaves the other stale. If `reset` fails
+with "image is in use by a container", a plugin container outlived its run —
+`podman stop` it (teardown is not guaranteed and `timeout_seconds` does not
+reliably end a run); `scripts/agents-sweep.sh` covers recovery.
+
 **2. Bring the stack up ONLY through `bash scripts/resume.sh`.** It exports
 `MCP_TOOL_TIMEOUT`, `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` and
 `MAX_MCP_OUTPUT_TOKENS` first. Without them claude's MCP client kills any tool
@@ -78,9 +87,21 @@ call silent for 60s — which is every render — and orphans the nested complet
 
 **3. Other Claude sessions share this working tree.** One checkout, one index,
 one `.git` — no isolation. A `git checkout`, `stash`, `reset` or branch switch
-by either session lands on the other mid-edit with no conflict marker. Use
-`ListAgents` / `SendMessage` to find and talk to peers; agree who owns which
-files before editing.
+by either session lands on the other mid-edit with no conflict marker. Agree who
+owns which files before editing.
+
+To find peers: `git worktree list`, `ps aux | grep objectiveai`, and
+`git log -3` against the shared checkout. `ListAgents` / `SendMessage` work in a
+main session but **`ListAgents` does not exist in a subagent context** — don't
+plan around it.
+
+**And a worktree-specific hazard:** `scripts/resume.sh` registers with
+`--path "$REPO"` derived from the script's own location, but its `register()`
+only checks whether the plugin *name* is listed, never the *path*. Run
+`resume.sh` from a worktree while a main-checkout registration exists and it
+prints `ok mcp registered` while silently serving **the other directory's
+code**. Check `objectiveai development plugins mcp list` for the path, or delete
+and re-create the registration deliberately.
 
 **4. A spawn prints a PATH, not an instance.** `daemon/<leaf>` — the last segment
 is the instance, everything before it is the parent. Passing the joined string

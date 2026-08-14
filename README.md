@@ -116,7 +116,7 @@ Both halves under one manifest, exactly as `scaffold.sh` emits:
 
 ```
 objectiveai.json   the ONE manifest — both halves, at the root
-mcp/               the MCP server (Rust): the three tools an agent calls
+mcp/               the MCP server (Rust): the six tools an agent calls
 viewer/            the tab: build.mjs, src/, its own Containerfile
 .agents/skills/    skills for coding agents working on this repo
 scripts/resume.sh  cold start + re-registration (registrations die with the daemon)
