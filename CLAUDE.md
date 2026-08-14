@@ -4,9 +4,21 @@
 
 ```bash
 git log -5 --format='%h %ad %s' --date=short && git tag -l
-bash scripts/verify-claims.sh      # 26 read-only checks, ~8s
-bash scripts/resume.sh --check     # is a daemon up WITHOUT the MCP env?
+pgrep -fl objectiveai-daemon       # is one already up, and did resume.sh start it?
+bash scripts/verify-claims.sh      # 26 checks, ~8s — but read the warning below FIRST
 ```
+
+**⚠️ `verify-claims.sh` is read-only about the REPO but it is not free: running
+any `objectiveai` command auto-spawns a daemon if none exists, and that daemon
+comes up WITHOUT the MCP timeout env** (measured 2026-08-14: with no daemon
+running, `--fast` left pid 5403 alive with zero `MCP_TOOL_TIMEOUT`). So it
+creates exactly the landmine trap 2 below describes. Safe orders:
+
+- Already working? `bash scripts/resume.sh` first, then verify freely.
+- Just looking? Run it, then **kill the daemon it spawned** before anyone renders.
+
+A cold session refused to run this file's own opening command because the docs
+did not resolve that ambiguity. It was right to.
 
 The newest commit is the last thing that happened. A document's own date only
 says when someone last edited it, and this file, `HANDOFF.md` and the plan are
@@ -177,8 +189,10 @@ where the operative claim lives; do not edit the archived record.
 
 ## Memory
 
-Folder-keyed, so a worktree under `.claude/worktrees/` starts with an EMPTY one
-and inherits everything from this file — which is why this file carries the
-traps rather than pointing at them. The repo's brain is
+Folder-keyed. A worktree under `.claude/worktrees/` gets its own key, so it does
+NOT inherit the rulings in the memory files — which is why this file carries the
+traps rather than pointing at them. (Measured 2026-08-14: a worktree session was
+auto-loaded with this file *and* the brain's `MEMORY.md` index, but the index is
+only pointers; assume the files behind them are unread.) The repo's brain is
 `~/.claude/projects/-Users-maya-Programming-phosphene/memory/`; Maya-wide facts
 live in the main brain at `-Users-maya-Desktop-work-claudecode/memory/`.

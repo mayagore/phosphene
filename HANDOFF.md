@@ -94,7 +94,7 @@ broadly right, but §6.3 is now superseded — see below.
 | Phase 1 — calibration spikes A–E | **Done** → `docs/spikes/01-calibration.md` |
 | Phase 2 — decisions (§6) | **Done** — see below |
 | Phase 3 — standards + CI (§7) | **Done** — `pnpm run verify`, `.github/workflows/ci.yml`, CI green |
-| Phase 4 — build (§8) | **Done 2026-08-04** — two-halves plugin, five MCP tools, postgres on |
+| Phase 4 — build (§8) | **Done 2026-08-04** — two-halves plugin, six MCP tools, postgres on |
 | Phase 5 — the UI (chat concept → canvas) | **Done 2026-08-05** — `50ef1b7`…`0c143bc` |
 | Phase 6 — expressiveness (E1–E4) | **E1 ruled against 2026-08-10; composition + E2 shipped in response. E3/E4 open** — see Next action |
 
@@ -106,8 +106,9 @@ broadly right, but §6.3 is now superseded — see below.
 3. **Halves** — ~~viewer only. STANDS.~~ **REVERSED 2026-08-02: BOTH HALVES.**
    `scaffold.sh` has no viewer-only mode — its one argument is which language
    the MCP half is written in — and a viewer-only plugin can expose zero tools
-   (`plugin_image.rs:283-287` hard-fails). The MCP half lives in `mcp/` with
-   three tools; commits `bfdbfe0`/`4709fcc`. The paragraph below is the earlier
+   (`plugin_image.rs:283-287` hard-fails). The MCP half lives in `mcp/` and had
+   three tools when this decision was written; it has **six** now; commits
+   `bfdbfe0`/`4709fcc`. The paragraph below is the earlier
    history, kept as written: (Briefly retracted on 2026-08-01 in
    favour of adding the MCP half; that retraction was itself wrong and is
    withdrawn — a script agent covers scoring with no container. See the
@@ -506,9 +507,14 @@ that copy conditional is a phosphene build decision, not an upstream one.
 
 ## Next action
 
+> **This heading is a recap, not a task.** The actual next thing to work on
+> lives in `~/.claude/plans/ancient-bubbling-beacon.md` — currently Phase A,
+> closing the taste loop. A cold session came here first expecting a task and
+> lost a minute.
+
 **Phases 0–5 are done.** Four platform passes, the boot check, the calibration
 spikes, §6's decisions, §7's standards + CI, the two-halves build, and the UI.
-The plugin runs end to end: viewer tab → one orchestrating agent → five MCP
+The plugin runs end to end: viewer tab → one orchestrating agent → six MCP
 tools → plugin postgres → boards on a pannable canvas that export.
 
 What follows is not the build. It is the product problem the build exposed.

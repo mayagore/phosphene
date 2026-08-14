@@ -1,6 +1,7 @@
 This is the server half of **phosphene** — an
-[ObjectiveAI](https://objectiveai.dev) MCP plugin. It serves three tools:
-`invent_directions`, `render_state`, `score_direction` (see `src/main.rs`;
+[ObjectiveAI](https://objectiveai.dev) MCP plugin. It serves six tools:
+`invent_directions`, `render_state`, `refine_state`, `score_direction`,
+`get_exploration`, `get_state` (see `src/main.rs`;
 the rubric and mechanism are in `../docs/scoring.md`). The sections below
 derive from the scaffold's README and describe machinery shared by every
 plugin, corrected where phosphene differs.
@@ -74,7 +75,7 @@ async fn greet(&self, Parameters(args): Parameters<GreetArgs>) -> String {
 Put anything your tools share — clients, handles, configuration — on
 `Plugin`. Every tool receives it as `&self`.
 
-Phosphene's three tools replaced the scaffold's `scaffold_*_deleteme`
+Phosphene's tools replaced the scaffold's `scaffold_*_deleteme`
 demos entirely (grep: no `deleteme` survives). Each tool does its work by
 spawning an agent completion back through the host; none holds state
 between runs — the in-process artboard cache lives exactly as long as the
