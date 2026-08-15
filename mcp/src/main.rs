@@ -499,7 +499,11 @@ pub struct Notes {
 
 /// Computed, never judged — asking a model to eyeball arithmetic is strictly
 /// worse than doing the arithmetic (docs/scoring.md §3). Frame fit is the one
-/// fact NOT here: it needs layout, so the viewer computes it where the
+/// fact NOT here: it would need layout, and NOTHING computes it — the
+/// viewer was meant to, but its iframes are sandbox="" and unreachable, so
+/// frame fit is an unbuilt intent, not a shipped fact. It stays out of
+/// `Facts` rather than being faked. The old text claimed the viewer
+/// computes it where the
 /// artboards already render.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct Facts {
@@ -2568,8 +2572,8 @@ impl Plugin {
         // claude judge would be marking its own homework.
         let upstream = parse_upstream(args.upstream.as_deref(), Upstream::OpenRouter)?;
 
-        // Read everything needed out of the cache, then DROP the lock before
-        // the await below — a std::sync::Mutex may never be held across one.
+        // Everything is read from postgres — the in-process cache (and its
+        // mutex) this comment once described is gone; storage replaced it.
         let eid = args.exploration_id.trim();
         let pool = pool().await?;
         let (direction, states) = load_direction(&pool, eid, args.direction_index).await?;

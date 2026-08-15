@@ -87,10 +87,10 @@ These print **beside** the scores as facts, and are not part of any score:
 | Fact | How |
 |---|---|
 | **WCAG contrast ratios** | bg/text, surface/text, accent/on-accent, from the declared palette |
-| **Frame fit** | content height vs 720, plus any internally clipped region. Needs layout, so it is computed **viewer-side** where the artboards already render in iframes — the plugin container has no browser. The other facts are computed in the tool. |
+| **Frame fit** | ~~computed viewer-side~~ **NOT COMPUTED — an unbuilt intent, recorded honestly.** The idea was content height vs 720 measured where the artboards render, but no viewer code measures anything and the sandboxed iframes cannot be reached from the tab (review 01 H6 called this impossible as built). Nothing anywhere reports overflow or clipping today. The other facts ARE computed, in the tool. |
 | **Palette adherence** | are the five declared hexes the ones the document actually uses, or did it drift? |
 | **Font adherence** | does the CSS use the declared stack? |
-| **Contract compliance** | no external resources, no JavaScript, valid XHTML |
+| **Contract compliance** | `external_free` and `javascript_free`, computed by string scan. ("Valid XHTML" is a prompt *instruction* to the renderer, not a computed fact — nothing parses the document for well-formedness.) |
 
 Palette drift is worth measuring because it is the failure Stitch is publicly
 known for — *"colors drift from brand systems"* — and it is invisible to a judge
@@ -105,7 +105,7 @@ reading prose.
 **One tool call = one judge, one direction.**
 
 ```
-phosphene_score_direction(brief, direction_index, model, upstream?) -> Score
+phosphene_score_direction(brief, exploration_id, direction_index, model, upstream?) -> ScoreResult
 ```
 
 The orchestrating agent calls it N times with N models. **Which models, and how
@@ -164,9 +164,19 @@ is now recoverable after a tab close, which is the substrate reattach needs.
   "scores":  { "craft": 0.72, "distinctiveness": 0.85,
                "fitness": 0.60, "coherence": 0.90 },
   "notes":   { "craft": "standard … gap … fix", "…": "…" },
-  "facts":   { "contrast": { "bg_text": 8.1, "accent_on": 3.2 },
-               "fit": { "overflow": 0, "clipped": 0 },
-               "palette_adherence": 0.94 }
+  "facts":   { "contrast": { "text_on_bg": 8.1, "text_on_surface": 7.2,
+                             "muted_on_bg": 4.6, "accent_on_bg": 3.2 },
+               "palette":  { "declared_used": 5, "foreign_colours": 2,
+                             "adherence": 0.94 },
+               "fonts_declared_used": true,
+               "fonts_embedded": ["Fraunces", "Space Mono"],
+               "svg_used": 7,
+               "composition": { "grid": 0, "flex": 4, "placed": 11,
+                                "off_axis": 3, "columns": 0, "drawn": 7,
+                                "vocabulary": 4 },
+               "javascript_free": true,
+               "external_free": true },
+  "states_seen": ["market-map", "stall-feed", "stall-detail"]
 }
 ```
 

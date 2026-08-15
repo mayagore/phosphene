@@ -78,8 +78,10 @@ Put anything your tools share — clients, handles, configuration — on
 Phosphene's tools replaced the scaffold's `scaffold_*_deleteme`
 demos entirely (grep: no `deleteme` survives). Each tool does its work by
 spawning an agent completion back through the host; none holds state
-between runs — the in-process artboard cache lives exactly as long as the
-per-completion container.
+in-process — artboards persist in the daemon's postgres (see "Using the
+database" below), which is what lets `resume` and `refine` reach an
+exploration from a later run. An earlier design cached artboards
+in-process for the life of the container; postgres replaced it.
 
 ## Using the database
 
@@ -104,9 +106,15 @@ proxy that was not up yet will not poison the process. A plugin whose
 manifest says `"postgres": false` gets a distinct `db::Error::NoDatabase`
 from `connect`, naming the opt-in it is missing.
 
-`scaffold_note_write_deleteme` and `scaffold_note_read_deleteme` are a
-round trip through it. Three things in them are worth keeping when you
-delete the rest:
+> **The `scaffold_*_deleteme` examples cited from here on no longer exist
+> in this repo** — phosphene deleted them all (grep: no `deleteme`
+> survives). They are kept in this README as the scaffold's own tutorial:
+> the machinery they demonstrate (the database proxy, channels,
+> `served_routes`) is real and shared by every plugin, but the example
+> code itself lives in the scaffold, not in `src/main.rs` here.
+
+`scaffold_note_write_deleteme` and `scaffold_note_read_deleteme` were a
+round trip through it. Three things in them are worth keeping:
 
 - **The database is the daemon's, not yours alone.** You share it with
   ObjectiveAI's own tables and with every other plugin. So own a

@@ -2,7 +2,7 @@ name: CI
 
 # Two jobs, because they prove different things.
 #
-# `verify` is fast and runs the contracts: typecheck, build, then the three
+# `verify` is fast and runs the contracts: typecheck, build, then the six
 # silent-failure assertions (react external, declared paths exist, entry
 # exports survive).
 #

@@ -120,15 +120,15 @@ ACTUAL="$(OAI agents spawn request-schema \
 check A4 "scripts/agents-sweep.sh:7" "instances me is gone at this version"
 CMD="objectiveai agents instances --help"; EXPECT="get list "; ACTUAL="$(subcommands agents instances)"; verdict
 
-check A5 ".agents/skills/agent-control/SKILL.md:88" "logs list requires exactly one of --all/--pending"
+check A5 ".agents/skills/agent-control/SKILL.md:91" "logs list requires exactly one of --all/--pending"
 CMD="objectiveai agents logs list --target 'instance=x,parent=y'"; EXPECT="rejected"
 ACTUAL="$(OAI agents logs list --target "instance=x,parent=y" >/dev/null 2>&1 && echo accepted || echo rejected)"; verdict
 
-check A6 ".agents/skills/agent-control/SKILL.md:84" "parent defaults to the caller's own AIH when omitted"
+check A6 ".agents/skills/agent-control/SKILL.md:87" "parent defaults to the caller's own AIH when omitted"
 CMD="objectiveai agents logs list --help"; EXPECT="documented"
 ACTUAL="$(helptext agents logs list | grep -qi "defaults to the cli's own" && echo documented || echo absent)"; verdict
 
-check A7 ".agents/skills/agent-control/SKILL.md:37" "agents spawn returns a bare string"
+check A7 ".agents/skills/agent-control/SKILL.md:40" "agents spawn returns a bare string"
 CMD="objectiveai agents spawn response-schema | jq -r .type"; EXPECT="string"
 ACTUAL="$(OAI agents spawn response-schema | jq -r '.type // "?"')"; verdict
 
@@ -203,7 +203,7 @@ else
     PARTS="$(OAI agents logs list --target "instance=$LEAF,parent=$PARENT" --all | jq -s '[.[].parts | length] | add // 0')"
     EXPECT="$LOGGED"; ACTUAL="$((PARTS + 1))"; verdict
 
-    check B6 ".agents/skills/agent-control/SKILL.md:77" "the JOINED form returns nothing, exit 0"
+    check B6 ".agents/skills/agent-control/SKILL.md:80" "the JOINED form returns nothing, exit 0"
     CMD="… logs list --target \"instance=\$AIH\" --all   # the mistake"
     J="$(OAI agents logs list --target "instance=$AIH" --all | grep -c . || true)"
     EXPECT="0"; ACTUAL="$J"; verdict
@@ -221,7 +221,7 @@ else
     B="$(OAI agents instances get --target "instance=$LEAF,parent=$ME/$PARENT" | jq -r '.logged')"
     EXPECT="differ"; ACTUAL="$([ "$A" != "$B" ] && echo differ || echo same)"; verdict
 
-    check B9 ".agents/skills/agent-control/SKILL.md:120" "--target me is a strict subset of --all"
+    check B9 ".agents/skills/agent-control/SKILL.md:126" "--target me is a strict subset of --all"
     CMD="instances list --target me | wc -l   vs   --all | wc -l"
     N_ME="$(OAI agents instances list --target me | grep -c . || true)"
     N_ALL="$(OAI agents instances list --all | grep -c . || true)"
@@ -251,12 +251,12 @@ else
     EXPECT="error,no-error-key"
     ACTUAL="$(printf '%s' "$NF" | jq -r '[(.type // "?"), (if has("error") then "has-error-key" else "no-error-key" end)] | join(",")')"; verdict
 
-    check B13 ".agents/skills/agent-control/SKILL.md:125" "instances get answers for a nonexistent id, without an agent block"
+    check B13 ".agents/skills/agent-control/SKILL.md:130" "instances get answers for a nonexistent id, without an agent block"
     CMD="objectiveai agents instances get --target instance=phosphene-verify-nonexistent"
     EXPECT="no-agent"
     ACTUAL="$(OAI agents instances get --target "instance=phosphene-verify-nonexistent" | jq -r 'if has("agent") then "has-agent" else "no-agent" end')"; verdict
 
-    check B14 ".agents/skills/agent-control/SKILL.md:131" "wait --inactive returns Ok for an id that never existed"
+    check B14 ".agents/skills/agent-control/SKILL.md:137" "wait --inactive returns Ok for an id that never existed"
     CMD="objectiveai agents wait --agent-instance phosphene-verify-nonexistent --inactive --timeout 5s"
     EXPECT="Ok"
     ACTUAL="$(OAI agents wait --agent-instance "phosphene-verify-nonexistent" --inactive --timeout 5s | jq -r '. // "?"' | tr -d '"')"; verdict

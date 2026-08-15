@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The three contracts that fail SILENTLY.
+ * The six contracts that fail SILENTLY.
  *
  * Run after `pnpm run build`, in CI and before any release. Each check exists
  * because the failure it catches produced a real, hard-to-diagnose bug — two of

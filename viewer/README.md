@@ -34,5 +34,5 @@ src/lib/orchestrator.ts  the one-button exploration agent + board derivation
 src/lib/board.ts       cell vocabulary (no prompts here — those live in ../mcp)
 src/lib/directions.ts  invention types + normalizer
 src/transport.ts       the Tauri IPC transport the SDK rides
-scripts/check-contracts.mjs  the five silent-failure assertions
+scripts/check-contracts.mjs  the six silent-failure assertions
 ```
