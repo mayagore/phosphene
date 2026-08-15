@@ -36,8 +36,10 @@ The procedure:
 1. Call phosphene_invent_directions ONCE with the user's brief. It returns 3 directions and 3 shared states.
 2. Call phosphene_render_state once per (direction × state) — 9 calls, no more, no fewer, and NEVER the same (direction_index, label) twice. For each direction, render states[0] BEFORE its other two states (the tool pins the shared chrome from stored state; you never pass HTML — never pass anchor_html). Pass direction_index (0, 1 or 2), the full states array, and the label. If one render fails, continue with the rest — do NOT retry it.
 3. If — and only if — the user named judge models, call phosphene_score_direction once per (direction × judge model) after that direction's states are rendered. Report every judge's scores separately; never average across judges.
+4. TASTE PASS — only if step 3 ran. For each direction, read its judges' notes. If at least one note names a CONCRETE gap between what the direction declared and what the markup delivers (an arrangement not achieved, a named selector, a missing treatment), call phosphene_refine_state ONCE for that direction — states[0] only, direction_index and label, and the single most actionable note passed VERBATIM as feedback. At most one refine per direction, ever: refining twice sands off the direction's character (measured). A direction whose notes name no concrete gap gets NO refine — praise is not feedback. If a refine fails, continue; do NOT retry.
+5. Re-judge ONLY the directions you refined, once per (refined direction × judge model) — same jury as step 3. The human sees the before and after verdicts; never average them.
 
-After the 9th render result (and any judging), STOP CALLING TOOLS and write a closing summary of AT MOST 2 sentences. Do not restate the documents or scores — the human already watched them arrive.`;
+After the final result, STOP CALLING TOOLS and write a closing summary of AT MOST 2 sentences. Do not restate the documents or scores — the human already watched them arrive.`;
 
 const resumePrompt = (
   explorationId: string,
@@ -62,8 +64,14 @@ Then one closing sentence. Do not restate the documents.`;
 
 /** Each driver's hard tool-CALL budget, mirrored for the run-budget chip —
  * the display shows the SAME ceiling the run is actually bounded by. (A
- * budget of calls, not of tools: the toolkit below is six.) */
-export const MAX_TOOL_CALLS = { explore: 16, refine: 9, resume: 10 } as const;
+ * budget of calls, not of tools: the toolkit below is six.)
+ *
+ * explore = 1 invent + 9 renders + 9 judges (3 judges × 3 directions) +
+ * 3 taste-pass refines + 9 re-judges = 31. The budget is the ONLY real
+ * enforcement of "refine once per direction" — the first headless taste
+ * loop was told "exactly three refines" in prose and made four (prose
+ * budgets drift; structural ones do not). A 32nd call is churn: abort. */
+export const MAX_TOOL_CALLS = { explore: 31, refine: 9, resume: 10 } as const;
 
 /** The agent's toolkit — display-side mirror of the MCP half's six tools
  * (mcp/src/main.rs). An agent is its JSON and its tools (docs/platform/
@@ -250,12 +258,15 @@ export async function explore(
       upstream: "claude_agent_sdk",
       thinking: false,
       plugins: [{ ...PHOSPHENE_PLUGIN }],
-      // Nine sequential renders at ~40-60s each is the honest baseline, plus
-      // a cold image build on first run. Stall covers the longest single
-      // render; the timeout covers the whole exploration.
-      timeoutSeconds: 1800,
+      // Nine sequential renders at ~90-155s each (measured, E1-size boards),
+      // plus judging, plus the taste pass: up to 3 refines at render cost
+      // and 9 re-judges. Stall covers the longest single call; the timeout
+      // covers the whole exploration — 9×155 + 9 judges + 3×155 + 9 judges
+      // ≈ 2400s of work, so 3600 leaves honest headroom without masking a
+      // hang (the stall watchdog catches those long before the timeout).
+      timeoutSeconds: 3600,
       stallSeconds: 660,
-      // 1 invent + 9 renders + up to 6 judges; 17th call = churn, abort.
+      // See MAX_TOOL_CALLS — the structural budget IS the refine-once rule.
       maxToolCalls: MAX_TOOL_CALLS.explore,
     },
     (progress) => {
