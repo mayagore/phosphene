@@ -59,9 +59,12 @@ The tab logs `phosphene: ready · daemon round trip Nms` to
 `~/.objectiveai/state/default/viewer/viewer-logs/`. A blank tab means look there
 first. Tear down with `development plugins viewer delete` (same trio).
 
-**Platform floor: ObjectiveAI ≥ 2.2.15.** Earlier releases cannot render ANY
-plugin tab — every entry chunk shipped with its exports stripped. Found here,
-fixed upstream in ObjectiveAI#302.
+**Platform floor: ObjectiveAI ≥ 2.2.16.** Below 2.2.16, a daemon started
+without the MCP timeout env silently kills any render over 60s — 2.2.16's
+runner defaults that env itself (found here, fixed upstream in
+ObjectiveAI#303). Below 2.2.15, no plugin tab renders at all — every entry
+chunk shipped with its exports stripped (found here, fixed in
+ObjectiveAI#302).
 
 ## Repo layout — settled
 
@@ -107,7 +110,7 @@ broadly right, but §6.3 is now superseded — see below.
    `scaffold.sh` has no viewer-only mode — its one argument is which language
    the MCP half is written in — and a viewer-only plugin can expose zero tools
    (`plugin_image.rs:283-287` hard-fails). The MCP half lives in `mcp/` and had
-   three tools when this decision was written; it has **six** now; commits
+   three tools when this decision was written; it has **seven** now; commits
    `bfdbfe0`/`4709fcc`. The paragraph below is the earlier
    history, kept as written: (Briefly retracted on 2026-08-01 in
    favour of adding the MCP half; that retraction was itself wrong and is
@@ -514,7 +517,7 @@ that copy conditional is a phosphene build decision, not an upstream one.
 
 **Phases 0–5 are done.** Four platform passes, the boot check, the calibration
 spikes, §6's decisions, §7's standards + CI, the two-halves build, and the UI.
-The plugin runs end to end: viewer tab → one orchestrating agent → six MCP
+The plugin runs end to end: viewer tab → one orchestrating agent → seven MCP
 tools → plugin postgres → boards on a pannable canvas that export.
 
 What follows is not the build. It is the product problem the build exposed.

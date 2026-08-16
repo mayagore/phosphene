@@ -27,8 +27,8 @@ edited at different times by different sessions.
 **You may be reading a stale copy of this file.** A session's auto-loaded
 context can predate the working tree. If this file disagrees with `README.md` —
 on the tool list, on anything — `git show HEAD:CLAUDE.md` wins. (Measured: a
-cold session was handed a copy claiming three MCP tools when there are six, and
-would have missed `refine_state` entirely.)
+cold session was handed a copy claiming three MCP tools when the repo had six,
+and would have missed `refine_state` entirely.)
 
 Run `verify-claims.sh` before believing anything below. It is eight seconds and
 cheaper than any assumption it catches.
@@ -37,9 +37,10 @@ cheaper than any assumption it catches.
 
 Design exploration and judgment, as an ObjectiveAI plugin.
 
-**Two halves.** Six MCP tools in Rust (`mcp/`) — `invent_directions`,
-`render_state`, `refine_state`, `score_direction`, `get_exploration`,
-`get_state`. A daemon-spawned agent calls them. The viewer tab (`viewer/`) is a
+**Two halves.** Seven MCP tools in Rust (`mcp/`) — `invent_directions`,
+`render_state`, `refine_state`, `score_direction`, `list_explorations`,
+`get_exploration`, `get_state`. A daemon-spawned agent calls them. The viewer
+tab (`viewer/`) is a
 **display** onto that agent's run and never does design work itself.
 
 Boards live in the daemon's postgres, keyed by a caller-minted `exploration_id`

@@ -5,10 +5,10 @@ an agent invents contrasting design directions, renders them across shared
 states, and — when you name judge models — scores them with a multi-model
 panel whose disagreement is shown, never averaged.
 
-A plugin is a set of tools. Phosphene's six are `invent_directions`,
-`render_state`, `refine_state`, `score_direction`, `get_exploration` and
-`get_state`, served by the MCP half; the viewer half is a tab that watches your
-agent use them.
+A plugin is a set of tools. Phosphene's seven are `invent_directions`,
+`render_state`, `refine_state`, `score_direction`, `list_explorations`,
+`get_exploration` and `get_state`, served by the MCP half; the viewer half is a
+tab that watches your agent use them.
 
 ## Using it
 
@@ -42,10 +42,10 @@ phosphene bugs when they bite:
 
 | | |
 |---|---|
-| ObjectiveAI CLI **≥ 2.2.15** | Earlier releases cannot render *any* plugin tab. |
-| podman machine with **≥ 6 GiB** | The default 2 GiB OOM-kills the MCP half's Rust build, and the SIGKILL surfaces as an unrelated MCP 502. |
-| **Your own Claude Code subscription**, signed in on the daemon host — **or** a declared upstream | Invention and rendering default to `claude_agent_sdk`, which runs on that machine's own `claude` login: free per run, and measurably denser (9,280 chars vs 6,179 on the same brief). This is a dependency on a subscription you hold separately, not something phosphene provides. **No login? Pass `upstream: "openrouter"` to `invent_directions` / `render_state` / `refine_state`** and it works without one — billed to your OpenRouter account, and a little thinner. Phosphene names a lapsed login for what it is; the platform itself reports it as `"Claude Code returned an error result: success"`. See the cost section below. |
-| **MCP timeout env on the daemon**, exported *before* it starts | `MCP_TOOL_TIMEOUT`, `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`, `MAX_MCP_OUTPUT_TOKENS`. Without them claude's MCP client kills any tool call silent for 60s — which is essentially every render — and orphans the nested completion. `scripts/resume.sh` exports these for you; a daemon started any other way must be killed and respawned through it. This one is a platform limitation a plugin cannot fix from its side. |
+| ObjectiveAI CLI **≥ 2.2.16** | Below 2.2.16, a daemon started without the MCP timeout env silently kills any render over 60s (2.2.16's runner defaults that env itself). Below 2.2.15, *no* plugin tab renders at all. |
+| podman machine with **≥ 6 GiB** | The default 2 GiB OOM-kills the MCP half's Rust build, and the SIGKILL surfaces as an unrelated MCP 502. 2.2.16 sizes new machines to 6 GiB itself; a machine created by an older release needs `podman machine set --memory 6144` once, stopped. |
+| **Your own Claude Code subscription**, signed in on the daemon host — **or** a declared upstream | Invention and rendering default to `claude_agent_sdk`, which runs on that machine's own `claude` login: free per run, and measurably denser (9,280 chars vs 6,179 on the same brief). This is a dependency on a subscription you hold separately, not something phosphene provides. **No login? Pass `upstream: "openrouter"` to `invent_directions` / `render_state` / `refine_state`** and it works without one — billed to your OpenRouter account, and a little thinner. Phosphene names a lapsed login for what it is; the platform below 2.2.16 reports it as `"Claude Code returned an error result: success"`. See the cost section below. |
+| **MCP timeout env on the daemon** — automatic on ≥ 2.2.16 | `MCP_TOOL_TIMEOUT`, `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`, `MAX_MCP_OUTPUT_TOKENS`. On ≥ 2.2.16 the runner sets these itself when the daemon's environment lacks them, so a bare `objectiveai` daemon is safe. `scripts/resume.sh` still exports them explicitly — operator env wins over the runner's defaults, and it keeps older daemons honest. |
 
 ### What it costs, and what phosphene can and cannot tell you
 
@@ -87,9 +87,9 @@ bash scripts/resume.sh
 That is the whole cold start: daemon → laboratory host → **both** plugin
 registrations → viewer, idempotent, every failure loud. `--check` reports
 without changing anything. Prerequisites it manages or checks for you: the
-ObjectiveAI CLI ≥ 2.2.15 on PATH, and a podman machine with **≥ 6 GiB**
+ObjectiveAI CLI ≥ 2.2.16 on PATH, and a podman machine with **≥ 6 GiB**
 memory (the default 2 GiB OOM-kills the MCP half's Rust build — see
-`docs/spikes/02-plugin-authoring.md` §2).
+`docs/spikes/02-plugin-authoring.md` §2; 2.2.16 sizes new machines itself).
 
 Then, for development:
 
@@ -116,7 +116,7 @@ Both halves under one manifest, exactly as `scaffold.sh` emits:
 
 ```
 objectiveai.json   the ONE manifest — both halves, at the root
-mcp/               the MCP server (Rust): the six tools an agent calls
+mcp/               the MCP server (Rust): the seven tools an agent calls
 viewer/            the tab: build.mjs, src/, its own Containerfile
 .agents/skills/    skills for coding agents working on this repo
 scripts/resume.sh  cold start + re-registration (registrations die with the daemon)
