@@ -33,7 +33,11 @@ contrasting directions, picks 3 states that suit the brief, and renders all 9
 as self-contained 400×720 documents onto a canvas you can pan, zoom and export.
 Name judge models in your brief and each direction is scored on four dimensions
 by each judge separately — the spread between judges is the point, so scores
-are never averaged. Then you can refine: give feedback in plain words and the
+are never averaged. When judges are named, the run closes its own loop once:
+each direction whose notes name a concrete gap is refined against its harshest
+note and re-judged — except directions whose declared composition argues
+restraint, which are left alone (measured twice: refinement damages them).
+Then you can refine further yourself: give feedback in plain words and the
 affected cells are revised in place. Expect **10–30 minutes** for a full
 exploration; renders are serial.
 

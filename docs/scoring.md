@@ -134,6 +134,39 @@ along, so nothing is lost by discarding distributions.
 A flat batch is all-or-nothing; one dead judge must not kill the panel. Each call
 carries its own error handling, exactly as `generateBoard` does per cell.
 
+### The taste pass — judgment feeds back, once
+
+When a jury is named, the exploration procedure closes the loop itself
+(`viewer/src/lib/orchestrator.ts`, the TASTE PASS step): after the initial
+panel, each direction gets at most ONE `refine_state`, fed the judge note
+verbatim as `feedback` — the notes already name selectors, so they are
+refinement instructions as written. Refined directions are re-judged with the
+same jury; `rankDirections` keeps the latest verdict per (direction, judge) so
+a re-judge never double-counts a juror.
+
+Two rules bound it, both measured:
+
+- **Praise is not feedback.** A direction is refined only when a note names a
+  concrete gap. Refining against praise regressed boards toward the mean in
+  the first headless cycles.
+- **Restraint strategies are skipped.** Directions whose declared composition
+  IS restraint — centred-column, single-stack, or any strategy whose argument
+  is restraint — get NO refine, ever. Measured twice before the rule: Quiet
+  Ink lost drawn matter 13→9 with craft −0.05 per cycle under refinement, and
+  Insomnia Blue lost −0.10 distinctiveness and −0.10 craft from a SINGLE
+  refine. Maximal strategies gained (+0.10 to +0.20 from their own harshest
+  critics, three cycles); restraint strategies have nowhere to go but toward
+  the mean. Maya's ruling, 2026-08-15: skip them. Confirmed both ways in
+  production (2026-08-16): six maximal directions across two full runs were
+  refined with zero wrong skips, and a taste pass over a stored exploration
+  holding a naturally-invented centred-column direction refined both maximal
+  siblings while leaving it untouched.
+
+The pass is budgeted structurally, not by prose: `MAX_TOOL_CALLS.explore`
+counts 1 invent + 9 renders + 9 judges + 3 refines + 9 re-judges = 31, and the
+driver cuts the agent off at the cap. Prose budgets drifted when we trusted
+them — an agent told "three refines" made four.
+
 ### Artboards do not travel through the agent's context
 
 The sharp mechanical problem. Three states × ~9 KB of HTML cannot be passed as

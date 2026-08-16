@@ -42,9 +42,15 @@ q() {
 }
 
 schema() {
+  # The schema name carries the plugin VERSION (plugin_…_v0_1_0_<hash>), so a
+  # coordinate flip leaves the old schema behind and creates a new one. DESC
+  # picks the highest version string — the live coordinates — instead of the
+  # stale one ASC used to grab. (String order, so v10 would sort below v2;
+  # fine for a dev script that has seen two versions ever.)
   local s
   s=$(q -c "SELECT schema_name FROM information_schema.schemata
-            WHERE schema_name LIKE 'plugin_%phosphene%' ORDER BY schema_name LIMIT 1;")
+            WHERE schema_name LIKE 'plugin_%phosphene%'
+            ORDER BY schema_name DESC LIMIT 1;")
   [ -n "$s" ] || die "no phosphene plugin schema in the daemon's database — has the plugin ever run?"
   printf '%s\n' "$s"
 }
