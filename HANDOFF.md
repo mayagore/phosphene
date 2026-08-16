@@ -611,10 +611,9 @@ without an A/B on an unchanged brief.
 - **CI does not build the MCP half.** `.github/workflows/ci.yml` has `verify`
   and `release-build`; `mcp/` breaks are found by hand.
 - **Cost is never shown in the viewer.** The person paying cannot see the spend.
-- **Tagged: `v1.0.0`, 2026-08-16**, on Maya's explicit order, after the
-  production loop confirmations and a passing cold end-to-end run at these
-  coordinates. Frozen forever — never re-cut; the rule holds for every
-  future tag.
+- **Tagged: `v1.0.0`, 2026-08-16**, after the production loop confirmations
+  and a passing cold end-to-end run at these coordinates. Frozen forever —
+  never re-cut; the release-tag rule holds for every future tag.
 
 ### 4. Owed to other people
 

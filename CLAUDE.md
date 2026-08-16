@@ -51,13 +51,11 @@ and a run outlives the tab that started it.
 
 ## Where this stands right now
 
-**Shipped: v1.0.0, tagged 2026-08-16 on Maya's explicit order** ("if it works
-tag and ping" — after the taste loop was confirmed both ways and a cold
-end-to-end run passed at the v1.0.0 coordinates). The tag is permanent — the
-image cache has no SHA pinning, so **v1.0.0 is never re-cut**; any change
-ships as a new version, and the never-tag-without-Maya rule applies to every
-future tag unchanged. (Her 2026-08-13 "keep exploring, don't tag yet" stood
-until she reversed it herself.)
+**Shipped: v1.0.0, tagged 2026-08-16** — after the taste loop was confirmed
+in production both ways and a cold end-to-end run passed at the v1.0.0
+coordinates. The tag is permanent — the image cache has no SHA pinning, so
+**v1.0.0 is never re-cut**; any change ships as a new version, and the
+release-tag rule below applies to every future tag unchanged.
 
 The live map is **`~/.claude/plans/ancient-bubbling-beacon.md`**. Read it before
 planning work. `HANDOFF.md` is the durable record of how we got here, not the
