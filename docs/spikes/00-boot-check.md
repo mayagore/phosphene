@@ -241,7 +241,7 @@ CSS.
    external in the host build, or pin vite to a rollup-based version).
 3. **Defect 2 is the schedule risk, not a phosphene design problem.** It does not
    touch any §6 decision. But it does mean phosphene cannot render anything in
-   the viewer until upstream moves — worth raising with Ronald directly rather
+   the viewer until upstream moves — worth raising upstream directly rather
    than waiting.
 4. **Pass 4 gains a concrete question:** is there an unreleased fix for the host
    shims on `main` or in flight? Branch `2-2-15` at time of writing is

@@ -21,8 +21,8 @@ A cold session refused to run this file's own opening command because the docs
 did not resolve that ambiguity. It was right to.
 
 The newest commit is the last thing that happened. A document's own date only
-says when someone last edited it, and this file, `HANDOFF.md` and the plan are
-edited at different times by different sessions.
+says when someone last edited it, and different documents here are edited at
+different times by different sessions.
 
 **You may be reading a stale copy of this file.** A session's auto-loaded
 context can predate the working tree. If this file disagrees with `README.md` —
@@ -57,9 +57,10 @@ coordinates. The tag is permanent — the image cache has no SHA pinning, so
 **v1.0.0 is never re-cut**; any change ships as a new version, and the
 release-tag rule below applies to every future tag unchanged.
 
-The live map is **`~/.claude/plans/ancient-bubbling-beacon.md`**. Read it before
-planning work. `HANDOFF.md` is the durable record of how we got here, not the
-plan.
+Maintainer session wiring — the live plan, the memory brains, the internal
+journals — lives in the untracked `CLAUDE.local.md`, which Claude Code loads
+alongside this file. If you are not the maintainer, this file plus `README.md`
+is the whole map.
 
 **The product problem, and the result so far.** Outputs were formulaic. Giving
 models better *materials* (a real font kit) changed nothing measurable —
@@ -98,8 +99,8 @@ reliably end a run); `scripts/agents-sweep.sh` covers recovery.
 `MAX_MCP_OUTPUT_TOKENS` first. Without them claude's MCP client kills any tool
 call silent for 60s — which is every render — and orphans the nested completion.
 **A bare CLI read auto-spawns a daemon WITHOUT that env**, so check
-`resume.sh --check` before trusting any run. Killing the daemon is sanctioned
-(Ronald, 2026-08-10).
+`resume.sh --check` before trusting any run. Killing a daemon to respawn it
+correctly is sanctioned by the platform owner.
 
 **3. Other Claude sessions share this working tree.** One checkout, one index,
 one `.git` — no isolation. A `git checkout`, `stash`, `reset` or branch switch
@@ -134,10 +135,12 @@ Exactly one of `--all` / `--pending` is required. `parent=` is absolute.
 
 ## Two rules that are not yours to break
 
-- **Never `git tag`** until Maya says "we are at the level of done." The tag IS
-  the release — no registry, no publish command — and the image cache is keyed
+- **Never `git tag`** until the maintainer rules the release done — the go
+  must be explicit, never inferred from an approved plan. The tag IS the
+  release — no registry, no publish command — and the image cache is keyed
   on `(owner, name, version)` with no SHA pinning, so a re-cut tag ships
-  different bits under one identity, permanently.
+  different bits under one identity, permanently. `v1.0.0` exists and is
+  never re-cut; changes ship as a new version.
 - **Never fabricate a design decision.** If a model returns no palette, no type
   choice or no composition, phosphene FAILS the direction rather than inventing
   one. It used to substitute a palette byte-identical to its own prompt example
@@ -164,8 +167,8 @@ error into an empty result (`2>/dev/null || echo 0`) reports "nothing happened"
 when it means "I am not looking." Use `scripts/pg.sh` to reach postgres; it
 resolves the port live and never reports a failure as a zero.
 
-**Precedence:** `docs/spikes/`, `docs/platform/`, `docs/reviews/`, `docs/legacy/`
-are records of what was observed on a date, not standing fact. Where one
+**Precedence:** `docs/spikes/`, `docs/platform/`, `docs/legacy/` are records
+of what was observed on a date, not standing fact. Where one
 disagrees with something verifiable, the verifiable thing wins. Supersede it
 where the operative claim lives; do not edit the archived record.
 
@@ -175,8 +178,7 @@ where the operative claim lives; do not edit the archived record.
 
 | doing | read |
 |---|---|
-| anything | the memory brain's `MEMORY.md` — it is an index, one line per topic |
-| planning work | `~/.claude/plans/ancient-bubbling-beacon.md` |
+| anything (maintainer) | `CLAUDE.local.md` — the untracked session wiring: plan, memory brains, journals |
 | running it | `README.md` — dev loops, prerequisites, contracts that fail silently |
 | touching agents | `.agents/skills/agent-control/SKILL.md` |
 | scoring / rubric | `docs/scoring.md` |
@@ -184,19 +186,10 @@ where the operative claim lives; do not edit the archived record.
 | why any of this exists | `docs/why-rebuild.md` |
 | checking our claims | `bash scripts/verify-claims.sh` — 26 checks, read-only, ~8s |
 
-## Repos on this machine
+## Memory and machine-local paths
 
-- `~/Programming/phosphene` — **this repo**, the live rebuild.
-- `~/phosphene` — `phosphene-legacy`, the shipped predecessor. Design reference
-  only; it predates the two-halves architecture and is not a code reference.
-- `~/Programming/objectiveai` — upstream source, above.
-
-## Memory
-
-Folder-keyed. A worktree under `.claude/worktrees/` gets its own key, so it does
-NOT inherit the rulings in the memory files — which is why this file carries the
-traps rather than pointing at them. (Measured 2026-08-14: a worktree session was
-auto-loaded with this file *and* the brain's `MEMORY.md` index, but the index is
-only pointers; assume the files behind them are unread.) The repo's brain is
-`~/.claude/projects/-Users-maya-Programming-phosphene/memory/`; Maya-wide facts
-live in the main brain at `-Users-maya-Desktop-work-claudecode/memory/`.
+The maintainer's memory brains, sibling repos, and plan files are named in the
+untracked `CLAUDE.local.md`, not here. One structural fact stays because it is
+the repo's: a worktree under `.claude/worktrees/` gets its own EMPTY memory
+key, which is why this file carries the traps in full rather than pointing at
+memory.

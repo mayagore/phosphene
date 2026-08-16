@@ -3,7 +3,7 @@
 > **SUPERSEDED IN PART (2026-08-03).** Functions and vector-completion
 > mechanics described below are read-accurate for 2.2.15 but are no longer
 > the platform's direction and phosphene must not build on them — no
-> functions, no distributed votes. Current direction: `04-where-its-going.md`.
+> functions, no distributed votes.
 > Design directives in this file that assume vector completions are void.
 
 > **Read at:** `ObjectiveAI/objectiveai` @ `e79dadb3e77a0f9ebb349677c6e0dbf8d6e20983` — 2026-07-30 03:38:56 -0500

@@ -167,11 +167,8 @@ asserted by `pnpm run check:contracts` (six assertions, run in CI):
 | What the platform is | `docs/platform/00-what-this-is.md` (see its banner) |
 | The viewer host contract | `docs/platform/01-viewer.md` |
 | The plugin contract | `docs/platform/02-plugin-contract.md` |
-| Where the platform is going | `docs/platform/04-where-its-going.md` |
-| Agent identity & versioning | `docs/platform/05-agent-identity.md` |
 | What building a plugin is like | `docs/spikes/02-plugin-authoring.md` |
 | What we score and how | `docs/scoring.md` |
-| The rebuild judged against all of the above | `docs/reviews/01-intention.md` |
 
 `docs/` is maintained, not written once — when a decision reverses, the doc
 that recorded it gets struck and dated, not silently rewritten.

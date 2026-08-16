@@ -8,3 +8,7 @@ undefined/
 
 # Worktrees live under .claude/ in the main checkout; .claude/skills/ is tracked.
 .claude/worktrees/
+
+# The maintainer's session wiring and internal journals — never public.
+internal/
+CLAUDE.local.md

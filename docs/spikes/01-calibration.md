@@ -58,7 +58,7 @@ Three things this settles beyond "it works":
 
 - **An OpenRouter key alone is sufficient.** No ObjectiveAI `apk_` key was
   needed; the hosted default accepted the request with only
-  `openrouter_authorization` set. That was an open question in §"what Ronald
+  `openrouter_authorization` set. That was an open question in §"what upstream
   intends".
 - **The viewer stamps its own identity.** The AIH is `Viewer/…`, not `daemon/…`
   — confirming Pass 2 §11's reading that `daemon_proxy` injects the viewer's

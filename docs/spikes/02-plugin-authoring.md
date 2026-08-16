@@ -60,7 +60,7 @@ podman machine set   --memory 6144 objectiveai
 podman machine start objectiveai
 ```
 
-**Worth telling Ronald.** A first-time plugin author on a Mac follows the
+**Worth reporting upstream.** A first-time plugin author on a Mac follows the
 scaffold README exactly and hits an unexplained build failure with no mention of
 memory anywhere in the chain. Either `laboratories spawn` should provision more
 than podman's 2 GiB default, or the failure should name the cause.

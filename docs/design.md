@@ -1,6 +1,6 @@
 # Design — the blue chat concept, adopted without fabricated numbers
 
-**Decided 2026-08-05** (plan approved by Maya; landed same day). The viewer
+**Decided 2026-08-05** (approved and landed same day). The viewer
 takes the legacy redesign's shape — `design-legacy/` (README, tokens,
 screens) is the frozen source, from `mayagore/phosphene-legacy` PR #14 and
 the Figma file `4NqOH4jScHXMGw8JZ0LbKP` (loop strip `151:95`, Components
@@ -25,7 +25,7 @@ scored **separately, never combined**.
 - **Per-cell states** (Artboard Card: Queued / Generating / failed /
   Scored / Selected), score chips on boards, selection ring, rank-ordered
   columns, WHY-THIS-SCORE disclosures, History, Prefer.
-- **The pan/zoom canvas** (Phase C, landed on Maya's go): the board is a
+- **The pan/zoom canvas** (Phase C): the board is a
   stage — drag pans, wheel zooms anchored at the cursor, double-click a
   board opens it, double-click the background (or the pill %, or the fit
   chip) frames everything. Cells sit at TRUE 400×720; one transform does
@@ -48,7 +48,7 @@ scored **separately, never combined**.
   dimension (chips in the center header, default fitness-to-brief); the
   verdict names each dimension's leader.
 - **Swarm-vote dots → judge points.** Vote distributions don't exist (by
-  design — and the platform itself moved off logprobs, `04-where-its-going`
+  design — and the platform itself moved off logprobs
   §4). The Inspector draws one dot per judge per dimension on a track, a
   spread band, a median needle, and every judge's written why.
 - **$ budget chip → run-budget chip.** claude_agent_sdk reports zero cost,

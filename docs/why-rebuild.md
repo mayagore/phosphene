@@ -52,9 +52,9 @@ letting the platform do what it already does.
   rather than deleted.
 - ~~Viewer-only vs. both halves (§6.3).~~ **Decided 2026-08-02: both halves** —
   `scaffold.sh` only emits both, a viewer-only plugin can expose zero tools,
-  and "a plugin just is a set of tools" (Ronald). The MCP half lives in `mcp/`.
+  and "a plugin just is a set of tools" (the platform owner). The MCP half lives in `mcp/`.
   (Decided viewer-only 2026-07-31, reversed once on 2026-08-01 and back, then
-  settled by the scaffold's own definition — the full trail is in HANDOFF §6.3
+  settled by the scaffold's own definition — the full trail is in the internal journal §6.3
   and commits `50bed71`/`bfdbfe0`/`4709fcc`.)
 - Toolchain (§6.5) — though again, deviation from the scaffold's esbuild
   `build.mjs` now needs a written reason.

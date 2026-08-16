@@ -5,7 +5,7 @@
 # findings turned out to be one usage error: passing the joined hierarchy as
 # `instance=` fabricates a target that never ran, and the daemon zero-fills it.
 # That single mistake became a doc section, a script comment, and two confused
-# questions to Ronald. Prose cannot catch that. A command can.
+# questions upstream. Prose cannot catch that. A command can.
 #
 #   bash scripts/verify-claims.sh              # tiers A + B — read-only, no cost
 #   bash scripts/verify-claims.sh --fast       # skip the one 4s timing check
@@ -104,14 +104,14 @@ printf '\nphosphene verify-claims — objectiveai %s\n' "$VER"
 # ── A. Architecture gates — no daemon, no cost ──────────────────────────
 printf '\n── A · architecture gates (no daemon, zero cost) ──\n'
 
-check A1 "HANDOFF.md:170" "swarms exposes only get|list|publish"
+check A1 "internal/HANDOFF.md:170" "swarms exposes only get|list|publish"
 CMD="objectiveai swarms --help"; EXPECT="get list publish "; ACTUAL="$(subcommands swarms)"; verdict
 
-check A2 "HANDOFF.md:134" "no top-level vector command group"
+check A2 "internal/HANDOFF.md:134" "no top-level vector command group"
 CMD="objectiveai vector --help"; EXPECT="absent"
 ACTUAL="$(OAI vector --help >/dev/null 2>&1 && echo present || echo absent)"; verdict
 
-check A3 "HANDOFF.md:172" "top_logprobs is documented vector-only"
+check A3 "internal/HANDOFF.md:172" "top_logprobs is documented vector-only"
 CMD="objectiveai agents spawn request-schema | jq …top_logprobs.description"; EXPECT="yes"
 ACTUAL="$(OAI agents spawn request-schema \
   | jq -r '[.["$defs"][]?.properties?.top_logprobs?.description // empty] | join(" ")' \
@@ -132,8 +132,8 @@ check A7 ".agents/skills/agent-control/SKILL.md:40" "agents spawn returns a bare
 CMD="objectiveai agents spawn response-schema | jq -r .type"; EXPECT="string"
 ACTUAL="$(OAI agents spawn response-schema | jq -r '.type // "?"')"; verdict
 
-check A8 "HANDOFF.md:256" "a logged error row REQUIRES error — 'error: null' is not a shape"
-corrects HANDOFF.md 'a not-found row\s*$|has \`error: null\`' "claimed a not-found row has error: null"
+check A8 "internal/HANDOFF.md:256" "a logged error row REQUIRES error — 'error: null' is not a shape"
+corrects internal/HANDOFF.md 'a not-found row\s*$|has \`error: null\`' "claimed a not-found row has error: null"
 CMD="objectiveai agents logs open response-schema"; EXPECT="required"
 ACTUAL="$(OAI agents logs open response-schema \
   | jq -r '[.. | objects | select((.required? // []) | index("error")) ] | if length > 0 then "required" else "optional" end')"; verdict
@@ -181,19 +181,19 @@ else
     EXPECT="ok"
     ACTUAL="$(OAI agents instances list --all | jq -e -s 'length > 0 and all(has("last_active_at") and has("queued") and has("logged") and has("agent_instance_hierarchy"))' >/dev/null && echo ok || echo bad)"; verdict
 
-    check B2 "HANDOFF.md:246" "instances get agrees with instances list on logged"
-    corrects HANDOFF.md 'reports .\*logged: 0.\* for runs' "claimed instances get reports logged: 0 for runs that executed"
+    check B2 "internal/HANDOFF.md:246" "instances get agrees with instances list on logged"
+    corrects internal/HANDOFF.md 'reports .\*logged: 0.\* for runs' "claimed instances get reports logged: 0 for runs that executed"
     CMD="objectiveai agents instances get --target \"instance=\$LEAF,parent=\$PARENT\""
     LIST_LOGGED="$(OAI agents instances list --all | jq -rs --arg a "$AIH" 'map(select(.agent_instance_hierarchy == $a)) | last | .logged // -1')"
     EXPECT="$LIST_LOGGED"; ACTUAL="$LOGGED"; verdict
 
-    check B3 "HANDOFF.md:247" "logs list with a SPLIT target and --all returns rows"
-    corrects HANDOFF.md 'returns zero rows\s*$|zero rows in every target form' "claimed logs list returns zero rows in every target form"
+    check B3 "internal/HANDOFF.md:247" "logs list with a SPLIT target and --all returns rows"
+    corrects internal/HANDOFF.md 'returns zero rows\s*$|zero rows in every target form' "claimed logs list returns zero rows in every target form"
     CMD="objectiveai agents logs list --target \"instance=\$LEAF,parent=\$PARENT\" --all"
     ROWS="$(OAI agents logs list --target "instance=$LEAF,parent=$PARENT" --all | grep -c . || true)"
     EXPECT="yes"; ACTUAL="$([ "$ROWS" -gt 0 ] && echo yes || echo no)"; verdict
 
-    check B4 "HANDOFF.md:247" "--pending is empty for a FINISHED run, exit 0"
+    check B4 "internal/HANDOFF.md:247" "--pending is empty for a FINISHED run, exit 0"
     CMD="… logs list --target \"instance=\$LEAF,parent=\$PARENT\" --pending"
     P="$(OAI agents logs list --target "instance=$LEAF,parent=$PARENT" --pending | grep -c . || true)"
     EXPECT="0"; ACTUAL="$P"; verdict
@@ -208,8 +208,8 @@ else
     J="$(OAI agents logs list --target "instance=$AIH" --all | grep -c . || true)"
     EXPECT="0"; ACTUAL="$J"; verdict
 
-    check B7 "HANDOFF.md:246" "the JOINED form is what fabricates a zero-filled target"
-    corrects HANDOFF.md 'most instruments lie' "framed the zero-fill as the instruments lying"
+    check B7 "internal/HANDOFF.md:246" "the JOINED form is what fabricates a zero-filled target"
+    corrects internal/HANDOFF.md 'most instruments lie' "framed the zero-fill as the instruments lying"
     CMD="objectiveai agents instances get --target \"instance=\$AIH\""
     EXPECT="$ME/$AIH 0"
     ACTUAL="$(OAI agents instances get --target "instance=$AIH" | jq -r '[.agent_instance_hierarchy, (.logged|tostring)] | join(" ")')"; verdict
@@ -234,7 +234,7 @@ else
     if [ "$ACTUAL" = "yes" ]; then LABEL="$LABEL [${ROOTS% }]"; fi
     verdict
 
-    check B11 "HANDOFF.md:251" "logs open --id returns part content"
+    check B11 "internal/HANDOFF.md:251" "logs open --id returns part content"
     CMD="objectiveai agents logs open --id <max part id>"
     PID="$(OAI agents logs list --target "instance=$LEAF,parent=$PARENT" --all | jq -s '[.[].parts[].id] | max // empty')"
     if [ -n "$PID" ]; then
@@ -244,8 +244,8 @@ else
       skip "fixture has no part ids"
     fi
 
-    check B12 "HANDOFF.md:256" "not-found has NO error key at all, exit 1"
-    corrects HANDOFF.md 'a not-found row\s*$|has \`error: null\`' "claimed a not-found row has error: null"
+    check B12 "internal/HANDOFF.md:256" "not-found has NO error key at all, exit 1"
+    corrects internal/HANDOFF.md 'a not-found row\s*$|has \`error: null\`' "claimed a not-found row has error: null"
     CMD="objectiveai agents logs open --id 999999999"
     NF="$(OAI agents logs open --id 999999999 || true)"
     EXPECT="error,no-error-key"
@@ -261,14 +261,14 @@ else
     EXPECT="Ok"
     ACTUAL="$(OAI agents wait --agent-instance "phosphene-verify-nonexistent" --inactive --timeout 5s | jq -r '. // "?"' | tr -d '"')"; verdict
 
-    check B15 "HANDOFF.md:262" "wait --inactive returns IMMEDIATELY, it does not burn the timeout"
-    corrects HANDOFF.md 'consume its entire timeout' "claimed wait --inactive consumes its entire timeout"
+    check B15 "internal/HANDOFF.md:262" "wait --inactive returns IMMEDIATELY, it does not burn the timeout"
+    corrects internal/HANDOFF.md 'consume its entire timeout' "claimed wait --inactive consumes its entire timeout"
     CMD="time objectiveai agents wait … --inactive --timeout 10s"
     T0=$SECONDS
     OAI agents wait --agent-instance "phosphene-verify-nonexistent" --inactive --timeout 10s >/dev/null || true
     EXPECT="fast"; ACTUAL="$([ $((SECONDS - T0)) -le 2 ] && echo fast || echo slow)"; verdict
 
-    check B16 "HANDOFF.md:262" "wait --active IS the one that burns the timeout"
+    check B16 "internal/HANDOFF.md:262" "wait --active IS the one that burns the timeout"
     if [ "$FAST" = true ]; then
       skip "--fast"
     else
@@ -278,7 +278,7 @@ else
       EXPECT="slow"; ACTUAL="$([ $((SECONDS - T0)) -ge 3 ] && echo slow || echo fast)"; verdict
     fi
 
-    check B17 "HANDOFF.md:247" "logs list --target me is empty because the CLI is not an agent"
+    check B17 "internal/HANDOFF.md:247" "logs list --target me is empty because the CLI is not an agent"
     CMD="objectiveai agents logs list --target me --all"
     M="$(OAI agents logs list --target me --all | grep -c . || true)"
     EXPECT="0"; ACTUAL="$M"; verdict

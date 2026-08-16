@@ -201,7 +201,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       // to 7 to 9, `last_active_at` advancing the whole time. That matches the
       // daemon's own default (`agents spawn` runs stream-false work as a
       // "detached in-process daemon task" that "outlives this call") and
-      // Ronald's ruling that a client's death orphaning its spawn is intended.
+      // the platform's ruling that a client's death orphaning its spawn is intended.
       //
       // Not yet proven for THIS path specifically: what died was a CLI client,
       // not a viewer tab. Both drop a `/execute` stream, so the inference is
@@ -608,7 +608,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
       if (busy) return;
       // `resume:<id>` is an escape hatch from EVERY phase, not just idle —
       // a completed board must never eat a resume paste as refine feedback
-      // (it did once; the refine agent politely declined and Maya was right
+      // (it did once; the refine agent politely declined and the call was right
       // to be confused).
       const text = composerText.trim();
       if (text.toLowerCase().startsWith("resume:")) {

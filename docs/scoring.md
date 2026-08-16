@@ -4,7 +4,7 @@
 `docs/legacy/00-the-old-app.md`, the design-evaluation research memory, and a web
 pass over what comparable tools and the literature actually do.
 
-**The two constraints that shape the mechanism**, both from Ronald: **no
+**The two constraints that shape the mechanism**, both platform constraints: **no
 distributed votes** (vector completions and logprobs are not the platform's pitch
 any more, and a plugin can never reach one) and **no functions**. So scoring is N
 ordinary agent completions and nothing else.
@@ -156,7 +156,7 @@ Two rules bound it, both measured:
   Insomnia Blue lost −0.10 distinctiveness and −0.10 craft from a SINGLE
   refine. Maximal strategies gained (+0.10 to +0.20 from their own harshest
   critics, three cycles); restraint strategies have nowhere to go but toward
-  the mean. Maya's ruling, 2026-08-15: skip them. Confirmed both ways in
+  the mean. Ruled 2026-08-15: skip them. Confirmed both ways in
   production (2026-08-16): six maximal directions across two full runs were
   refined with zero wrong skips, and a taste pass over a stored exploration
   holding a naturally-invented centred-column direction refined both maximal

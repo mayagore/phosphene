@@ -186,4 +186,4 @@ announce itself.
   the only open item that could invalidate Pass 3.
 - Does the `2-2-15` branch (still carrying `ffcb1f2`, the podman-download
   timeout fix, unmerged) get folded into a `2.2.16`, or was it superseded by our
-  `2-2-15-2`? Worth asking Ronald rather than guessing — we branched around it.
+  `2-2-15-2`? Worth asking upstream rather than guessing — we branched around it.
