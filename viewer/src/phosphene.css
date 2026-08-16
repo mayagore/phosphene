@@ -367,6 +367,23 @@
   color: var(--ph-color-text-muted);
 }
 
+/* "on this daemon" — separates localStorage entries from list_explorations
+ * results in the same popover. */
+.ph-history-divider {
+  font-size: var(--ph-text-label);
+  letter-spacing: var(--ph-text-label--letter-spacing);
+  text-transform: uppercase;
+  color: var(--ph-color-text-muted);
+  padding: var(--ph-spacing-2) var(--ph-spacing-2) 0;
+}
+
+/* Daemon-section status lines: listing… / failed / truncated / empty. */
+.ph-history-note {
+  font-size: var(--ph-text-caption);
+  color: var(--ph-color-text-muted);
+  padding: var(--ph-spacing-1) var(--ph-spacing-2);
+}
+
 /* The run-budget chip: real numbers only — tool calls against the driver's
  * hard cap, bytes streamed back, judges reporting, elapsed. Cost is always
  * zero on this upstream, so no dollar ever appears here (docs/design.md). */

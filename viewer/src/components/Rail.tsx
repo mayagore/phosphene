@@ -8,10 +8,17 @@
  * ALL-CAPS eyebrows, check-dot plan steps, chip pills. All styling is our own
  * `.ph-*` classes on `--ph-*` tokens — never the viewer's utility classes.
  */
-import { useEffect, useRef, type Ref } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import type { ToolEvent } from "../lib/agent";
 import type { Turn } from "../lib/turns";
 import type { HistoryEntry } from "../lib/history";
+import type { StoredExploration } from "../lib/orchestrator";
+
+/** What onListStored resolves with. */
+export interface StoredListing {
+  explorations: StoredExploration[];
+  truncated: boolean;
+}
 
 export interface RailHealth {
   state: "connecting" | "ready" | "unavailable";
@@ -50,6 +57,10 @@ interface RailProps {
   onToggleTheme: () => void;
   history: HistoryEntry[];
   onPickHistory: (entry: HistoryEntry) => void;
+  /** Fetch the daemon's stored explorations — fired the first time the
+   * history popover opens, so the menu shows every run the daemon holds,
+   * not only what this browser's localStorage survived. */
+  onListStored?: () => Promise<StoredListing>;
   /** Present when a session is loaded: clears the tab back to First run.
    * Client-side only — every exploration stays in the database, one resume
    * away. */
@@ -236,11 +247,24 @@ export default function Rail({
   onToggleTheme,
   history,
   onPickHistory,
+  onListStored,
   onNewSession,
   inputRef,
 }: RailProps) {
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const historyRef = useRef<HTMLDetailsElement | null>(null);
+  const [stored, setStored] = useState<StoredListing | null>(null);
+  const [storedState, setStoredState] = useState<"idle" | "loading" | "failed">("idle");
+  const fetchStored = () => {
+    if (!onListStored || storedState === "loading" || stored) return;
+    setStoredState("loading");
+    onListStored()
+      .then((listing) => {
+        setStored(listing);
+        setStoredState("idle");
+      })
+      .catch(() => setStoredState("failed"));
+  };
 
   // The history popover only ever closed by PICKING something from it, so
   // clicking anywhere else left it open — over the board, and (before the
@@ -297,8 +321,14 @@ export default function Rail({
               new
             </button>
           )}
-          {history.length > 0 && (
-            <details className="ph-history" ref={historyRef}>
+          {(history.length > 0 || onListStored) && (
+            <details
+              className="ph-history"
+              ref={historyRef}
+              onToggle={(e) => {
+                if ((e.target as HTMLDetailsElement).open) fetchStored();
+              }}
+            >
               <summary title="Past explorations — click one to resume it">↺</summary>
               <ul className="ph-history-list">
                 {history.map((entry) => (
@@ -317,6 +347,49 @@ export default function Rail({
                     </button>
                   </li>
                 ))}
+                {onListStored && (
+                  <>
+                    <li className="ph-history-divider" aria-hidden="true">
+                      on this daemon
+                    </li>
+                    {storedState === "loading" && (
+                      <li className="ph-history-note">listing…</li>
+                    )}
+                    {storedState === "failed" && (
+                      <li className="ph-history-note">listing failed — is the daemon up?</li>
+                    )}
+                    {stored?.explorations
+                      .filter((e) => !history.some((h) => h.explorationId === e.exploration_id))
+                      .map((e) => (
+                        <li key={e.exploration_id}>
+                          <button
+                            type="button"
+                            className="ph-history-entry"
+                            disabled={busy}
+                            onClick={() => {
+                              historyRef.current?.removeAttribute("open");
+                              onPickHistory({
+                                explorationId: e.exploration_id,
+                                brief: e.brief,
+                                when: Date.parse(e.created_at) || 0,
+                              });
+                            }}
+                          >
+                            <span className="ph-history-brief">{e.brief}</span>
+                            <span className="ph-history-when">
+                              {e.boards} board{e.boards === 1 ? "" : "s"}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    {stored?.truncated && (
+                      <li className="ph-history-note">newest 50 shown — older runs exist</li>
+                    )}
+                    {stored && stored.explorations.length === 0 && (
+                      <li className="ph-history-note">nothing stored yet</li>
+                    )}
+                  </>
+                )}
               </ul>
             </details>
           )}

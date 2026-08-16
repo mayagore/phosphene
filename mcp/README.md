@@ -1,7 +1,7 @@
 This is the server half of **phosphene** — an
-[ObjectiveAI](https://objectiveai.dev) MCP plugin. It serves six tools:
+[ObjectiveAI](https://objectiveai.dev) MCP plugin. It serves seven tools:
 `invent_directions`, `render_state`, `refine_state`, `score_direction`,
-`get_exploration`, `get_state` (see `src/main.rs`;
+`list_explorations`, `get_exploration`, `get_state` (see `src/main.rs`;
 the rubric and mechanism are in `../docs/scoring.md`). The sections below
 derive from the scaffold's README and describe machinery shared by every
 plugin, corrected where phosphene differs.

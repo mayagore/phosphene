@@ -41,6 +41,10 @@ The procedure:
 
 After the final result, STOP CALLING TOOLS and write a closing summary of AT MOST 2 sentences. Do not restate the documents or scores — the human already watched them arrive.`;
 
+const listPrompt = () => `You list this daemon's stored design explorations into the display. One instant read, no generation.
+
+Call phosphene_list_explorations ONCE, with no arguments. Then say exactly "listed" and stop.`;
+
 const resumePrompt = (
   explorationId: string,
 ) => `You replay an already-stored design exploration into the display. No generation — every call is an instant read. Use exploration_id "${explorationId}" on every call.
@@ -64,16 +68,16 @@ Then one closing sentence. Do not restate the documents.`;
 
 /** Each driver's hard tool-CALL budget, mirrored for the run-budget chip —
  * the display shows the SAME ceiling the run is actually bounded by. (A
- * budget of calls, not of tools: the toolkit below is six.)
+ * budget of calls, not of tools: the toolkit below is seven.)
  *
  * explore = 1 invent + 9 renders + 9 judges (3 judges × 3 directions) +
  * 3 taste-pass refines + 9 re-judges = 31. The budget is the ONLY real
  * enforcement of "refine once per direction" — the first headless taste
  * loop was told "exactly three refines" in prose and made four (prose
  * budgets drift; structural ones do not). A 32nd call is churn: abort. */
-export const MAX_TOOL_CALLS = { explore: 31, refine: 9, resume: 10 } as const;
+export const MAX_TOOL_CALLS = { explore: 31, refine: 9, resume: 10, list: 1 } as const;
 
-/** The agent's toolkit — display-side mirror of the MCP half's six tools
+/** The agent's toolkit — display-side mirror of the MCP half's seven tools
  * (mcp/src/main.rs). An agent is its JSON and its tools (docs/platform/
  * 05-agent-identity.md); the viewer exists to let a human SEE that agent
  * work, so the toolkit is named on the surface, prefixed exactly as the
@@ -83,6 +87,7 @@ export const PHOSPHENE_TOOLKIT = [
   { name: "phosphene_render_state", what: "renders one direction × state artboard at 400×720" },
   { name: "phosphene_refine_state", what: "revises one artboard from your feedback" },
   { name: "phosphene_score_direction", what: "one judge model's verdict — four dimensions, written whys, measured facts" },
+  { name: "phosphene_list_explorations", what: "lists every exploration stored on this daemon" },
   { name: "phosphene_get_exploration", what: "reads a stored exploration's directions and states" },
   { name: "phosphene_get_state", what: "reads one stored artboard" },
 ] as const;
@@ -318,6 +323,57 @@ export async function refine(
 }
 
 /** Replay a stored exploration into the display — pure reads, id is enough. */
+/** A stored exploration as the daemon lists it — the viewer-side mirror of
+ * the MCP half's ExplorationSummary. */
+export interface StoredExploration {
+  exploration_id: string;
+  brief: string;
+  directions: string[];
+  boards: number;
+  created_at: string;
+}
+
+/** List the daemon's stored explorations via a one-call agent. The viewer
+ * never reaches the database itself — display doctrine — so even a listing
+ * is an agent doing a read with a tool. Costs one instant tool call. */
+export async function listStored(
+  executor: CommandExecutor,
+  signal?: AbortFlag,
+): Promise<{ explorations: StoredExploration[]; truncated: boolean }> {
+  let latest: ToolEvent[] = [];
+  await runAgent(
+    executor,
+    {
+      system: listPrompt(),
+      user: "List the stored explorations.",
+      upstream: "claude_agent_sdk",
+      thinking: false,
+      plugins: [{ ...PHOSPHENE_PLUGIN }],
+      timeoutSeconds: 120,
+      stallSeconds: 90,
+      maxToolCalls: MAX_TOOL_CALLS.list,
+    },
+    (p) => {
+      latest = p.tools;
+    },
+    signal,
+  );
+  const event = latest.find((t) => t.name.endsWith("list_explorations"));
+  if (!event?.result) return { explorations: [], truncated: false };
+  try {
+    const parsed = JSON.parse(event.result) as {
+      explorations?: StoredExploration[];
+      truncated?: boolean;
+    };
+    return {
+      explorations: Array.isArray(parsed.explorations) ? parsed.explorations : [],
+      truncated: parsed.truncated === true,
+    };
+  } catch {
+    return { explorations: [], truncated: false };
+  }
+}
+
 export async function resume(
   executor: CommandExecutor,
   explorationId: string,

@@ -328,6 +328,30 @@ pub struct Invention {
     pub states: Vec<String>,
 }
 
+/// One stored exploration, as `list_explorations` reports it. A summary, not
+/// the document: names and counts, never markup — listing must stay instant
+/// and lean no matter how many boards a daemon holds.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ExplorationSummary {
+    pub exploration_id: String,
+    pub brief: String,
+    /// Direction names only — enough to recognize a run, nothing to render.
+    pub directions: Vec<String>,
+    /// Stored artboards under this exploration, refined rounds included.
+    pub boards: i64,
+    /// `created_at::text` — cast in SQL; the framework's sqlx has no chrono.
+    pub created_at: String,
+}
+
+/// `list_explorations`' envelope. `truncated` says a LIMIT was hit, so a
+/// caller never mistakes "the newest 50" for "everything" — a silent cap
+/// reads as full coverage, which is this repo's least favourite lie.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ExplorationList {
+    pub explorations: Vec<ExplorationSummary>,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct InventArgs {
     /// The design brief, in the designer's own words — e.g. "a dating app
@@ -2382,6 +2406,70 @@ impl Plugin {
         .map_err(|e| internal(error_chain("store the artboard", &e)))?;
 
         Ok(Json(lean_rendered(label, &html)))
+    }
+
+    #[rmcp::tool(
+        description = "List every exploration stored on this daemon, newest first — \
+                       no generation, instant. Each entry carries the id, the brief, \
+                       the direction names, the stored board count and when it was \
+                       made. The exploration_id in an entry is the SAME capability \
+                       every other tool takes, so this is how a stored run is found \
+                       again when nobody kept the id. Returns at most 50; truncated \
+                       says whether older ones exist beyond the cut."
+    )]
+    async fn list_explorations(
+        &self,
+    ) -> Result<Json<ExplorationList>, rmcp::ErrorData> {
+        use sqlx::Row as _;
+        const LIMIT: i64 = 50;
+        let pool = pool().await?;
+        // One query, one round trip: the board count rides as a correlated
+        // subquery so a daemon with hundreds of runs still answers instantly.
+        let rows = sqlx::query(
+            "SELECT e.exploration_id, e.brief, e.directions, \
+                    e.created_at::text AS created_at, \
+                    (SELECT count(*) FROM phosphene_artboards a \
+                      WHERE a.exploration_id = e.exploration_id) AS boards \
+             FROM phosphene_explorations e \
+             ORDER BY e.created_at DESC \
+             LIMIT $1",
+        )
+        .bind(LIMIT + 1)
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| internal(error_chain("list explorations", &e)))?;
+
+        let truncated = rows.len() as i64 > LIMIT;
+        let explorations = rows
+            .into_iter()
+            .take(LIMIT as usize)
+            .map(|row| {
+                // Direction NAMES only. A malformed stored row costs itself
+                // its names, never the listing.
+                let directions: Vec<String> = serde_json::from_value::<
+                    Vec<serde_json::Value>,
+                >(row.get("directions"))
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|d| {
+                            d.get("name")
+                                .and_then(|n| n.as_str())
+                                .map(str::to_string)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+                ExplorationSummary {
+                    exploration_id: row.get("exploration_id"),
+                    brief: row.get("brief"),
+                    directions,
+                    boards: row.get("boards"),
+                    created_at: row.get("created_at"),
+                }
+            })
+            .collect();
+        Ok(Json(ExplorationList { explorations, truncated }))
     }
 
     #[rmcp::tool(

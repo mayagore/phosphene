@@ -27,6 +27,7 @@ import {
   MAX_TOOL_CALLS,
   deriveExploration,
   explore,
+  listStored,
   refine,
   resume,
   type Exploration,
@@ -674,6 +675,7 @@ export default function Phosphene({ arguments: _args }: TabProps) {
         theme={theme}
         onToggleTheme={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
         history={history}
+        onListStored={async () => listStored(Client.viewer(await transport()))}
         onPickHistory={(entry) => {
           if (!busy) void doResume(entry.explorationId, entry.brief);
         }}
