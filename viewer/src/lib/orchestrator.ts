@@ -25,7 +25,7 @@ import { cellKey, type CellStatus } from "./board";
 export const PHOSPHENE_PLUGIN = {
   owner: "mayagore",
   name: "phosphene",
-  version: "v1.0.0",
+  version: "v1.0.1",
 } as const;
 
 const explorePrompt = (explorationId: string) => `You explore design briefs using your phosphene tools. A human is watching the board fill in as you work — your tool calls ARE the product; your prose is only a closing summary.

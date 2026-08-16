@@ -12,16 +12,17 @@ tab that watches your agent use them.
 
 ## Using it
 
-> **v1.0.0 is the release** — cut 2026-08-16 after the taste loop was
+> **v1.0.1 is the release** — cut 2026-08-16 after the taste loop was
 > confirmed in production both ways and a cold end-to-end run passed at these
-> exact coordinates. The tag is frozen forever: the laboratory caches built
-> images by `(owner, name, version)` with no SHA pinning, so this identity is
-> never re-cut — changes ship as a new version.
+> coordinates. (v1.0.0 was cut and superseded the same day; declare v1.0.1.)
+> A tag is frozen forever: the laboratory caches built images by
+> `(owner, name, version)` with no SHA pinning, so a cut identity is never
+> re-cut or reused — changes ship as a new version.
 
 An agent reaches the tools by declaring the plugin:
 
 ```json
-{ "plugins": [{ "owner": "mayagore", "name": "phosphene", "version": "v1.0.0" }] }
+{ "plugins": [{ "owner": "mayagore", "name": "phosphene", "version": "v1.0.1" }] }
 ```
 
 There is no registry and no install step — the laboratory host fetches
@@ -109,7 +110,7 @@ cd mcp && cargo test                         # the tool half
 **The two dev loops are different.** The viewer half is picked up on tab
 switch. The MCP half serves a **stale image silently** until you run
 `objectiveai development plugins mcp reset --owner mayagore --name phosphene
---version v1.0.0` after an edit.
+--version v1.0.1` after an edit.
 
 The tab reports its own health to the viewer's log inbox on boot
 (`phosphene: ready · daemon round trip Nms`). If the tab is blank, look there

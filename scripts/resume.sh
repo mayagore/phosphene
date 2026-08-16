@@ -20,7 +20,7 @@ set -euo pipefail
 # mismatch is silent. One definition here so the two calls cannot drift.
 OWNER="mayagore"
 NAME="phosphene"
-VERSION="v1.0.0"
+VERSION="v1.0.1"
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHECK_ONLY=false

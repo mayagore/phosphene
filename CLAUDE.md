@@ -51,10 +51,10 @@ and a run outlives the tab that started it.
 
 ## Where this stands right now
 
-**Shipped: v1.0.0, tagged 2026-08-16** — after the taste loop was confirmed
-in production both ways and a cold end-to-end run passed at the v1.0.0
+**Shipped: v1.0.1, tagged 2026-08-16** — after the taste loop was confirmed
+in production both ways and a cold end-to-end run passed at these
 coordinates. The tag is permanent — the image cache has no SHA pinning, so
-**v1.0.0 is never re-cut**; any change ships as a new version, and the
+**a cut tag is never re-cut**; any change ships as a new version, and the
 release-tag rule below applies to every future tag unchanged.
 
 Maintainer session wiring — the live plan, the memory brains, the internal
@@ -78,7 +78,7 @@ image whenever one exists, so a successful call proves the container *answers* �
 not which build it is serving. After ANY `mcp/` change:
 
 ```bash
-podman rmi -f localhost/objectiveai-plugin:mayagore-phosphene-v1.0.0
+podman rmi -f localhost/objectiveai-plugin:mayagore-phosphene-v1.0.1
 ```
 
 (Vendored podman: `~/.objectiveai/bin/podman/*/podman-*/usr/bin`, with
@@ -88,7 +88,7 @@ the run for new-prompt vocabulary, never by the call succeeding.
 **`rmi` and `mcp reset` are not alternatives — do both, in this order.** They
 clear different caches: `podman rmi` drops the built image, and
 `objectiveai development plugins mcp reset --owner mayagore --name phosphene
---version v1.0.0` drops the daemon's registration state that otherwise takes an
+--version v1.0.1` drops the daemon's registration state that otherwise takes an
 image-exists fast path. Doing only one leaves the other stale. If `reset` fails
 with "image is in use by a container", a plugin container outlived its run —
 `podman stop` it (teardown is not guaranteed and `timeout_seconds` does not
@@ -139,8 +139,7 @@ Exactly one of `--all` / `--pending` is required. `parent=` is absolute.
   must be explicit, never inferred from an approved plan. The tag IS the
   release — no registry, no publish command — and the image cache is keyed
   on `(owner, name, version)` with no SHA pinning, so a re-cut tag ships
-  different bits under one identity, permanently. `v1.0.0` exists and is
-  never re-cut; changes ship as a new version.
+  different bits under one identity, permanently. `v1.0.1` is the live version; superseded tags are never re-cut or reused.
 - **Never fabricate a design decision.** If a model returns no palette, no type
   choice or no composition, phosphene FAILS the direction rather than inventing
   one. It used to substitute a palette byte-identical to its own prompt example
