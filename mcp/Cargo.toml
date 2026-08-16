@@ -1,6 +1,6 @@
 [package]
 name = "phosphene"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 description = "phosphene's MCP half — design exploration and judgment tools"
 license = "MIT"

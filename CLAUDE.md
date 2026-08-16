@@ -51,8 +51,13 @@ and a run outlives the tab that started it.
 
 ## Where this stands right now
 
-**Not shipping. Nothing is tagged, and nothing should be.** Maya, 2026-08-13:
-*"keep exploring, don't tag yet."* Output quality is the open question.
+**Shipped: v1.0.0, tagged 2026-08-16 on Maya's explicit order** ("if it works
+tag and ping" — after the taste loop was confirmed both ways and a cold
+end-to-end run passed at the v1.0.0 coordinates). The tag is permanent — the
+image cache has no SHA pinning, so **v1.0.0 is never re-cut**; any change
+ships as a new version, and the never-tag-without-Maya rule applies to every
+future tag unchanged. (Her 2026-08-13 "keep exploring, don't tag yet" stood
+until she reversed it herself.)
 
 The live map is **`~/.claude/plans/ancient-bubbling-beacon.md`**. Read it before
 planning work. `HANDOFF.md` is the durable record of how we got here, not the
@@ -74,7 +79,7 @@ image whenever one exists, so a successful call proves the container *answers* �
 not which build it is serving. After ANY `mcp/` change:
 
 ```bash
-podman rmi -f localhost/objectiveai-plugin:mayagore-phosphene-v0.1.0
+podman rmi -f localhost/objectiveai-plugin:mayagore-phosphene-v1.0.0
 ```
 
 (Vendored podman: `~/.objectiveai/bin/podman/*/podman-*/usr/bin`, with
@@ -84,7 +89,7 @@ the run for new-prompt vocabulary, never by the call succeeding.
 **`rmi` and `mcp reset` are not alternatives — do both, in this order.** They
 clear different caches: `podman rmi` drops the built image, and
 `objectiveai development plugins mcp reset --owner mayagore --name phosphene
---version v0.1.0` drops the daemon's registration state that otherwise takes an
+--version v1.0.0` drops the daemon's registration state that otherwise takes an
 image-exists fast path. Doing only one leaves the other stale. If `reset` fails
 with "image is in use by a container", a plugin container outlived its run —
 `podman stop` it (teardown is not guaranteed and `timeout_seconds` does not

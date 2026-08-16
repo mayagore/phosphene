@@ -1,7 +1,7 @@
 {
   "name": "phosphene",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Design iteration and judgment, as an ObjectiveAI viewer plugin. Identity lives in the git tag on release and in the `development plugins viewer create` registration in development \u2014 never in this file.",
   "type": "module",
   "packageManager": "pnpm@10.33.2",

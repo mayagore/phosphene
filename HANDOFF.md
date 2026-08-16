@@ -51,7 +51,7 @@ To see it running in the viewer:
 ```bash
 pnpm run dev &                          # watch build -> dist/
 objectiveai development plugins viewer create \
-  --owner mayagore --name phosphene --version v0.1.0 --path "$PWD"
+  --owner mayagore --name phosphene --version v1.0.0 --path "$PWD"
 objectiveai viewer spawn
 ```
 
@@ -611,8 +611,10 @@ without an A/B on an unchanged brief.
 - **CI does not build the MCP half.** `.github/workflows/ci.yml` has `verify`
   and `release-build`; `mcp/` breaks are found by hand.
 - **Cost is never shown in the viewer.** The person paying cannot see the spend.
-- **Never tagged.** No git tag exists. The frozen-tag rule applies at `v0.1.0` —
-  tag deliberately.
+- **Tagged: `v1.0.0`, 2026-08-16**, on Maya's explicit order, after the
+  production loop confirmations and a passing cold end-to-end run at these
+  coordinates. Frozen forever — never re-cut; the rule holds for every
+  future tag.
 
 ### 4. Owed to other people
 
